@@ -2,14 +2,36 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 //! Bounded time-series statistics and feature extraction for embedded systems.
+//!
+//! # Online extrema
+//!
+//! ```
+//! use krabilorean::online::Extrema;
+//! use krabilorean::policy::Checked;
+//!
+//! let mut extrema = Extrema::<Checked, i16>::new();
+//! for sample in [4_i16, -2, 7, 3] {
+//!     extrema.update(sample)?;
+//! }
+//!
+//! let snapshot = extrema.snapshot().expect("at least one sample");
+//! assert_eq!((snapshot.samples, snapshot.minimum, snapshot.maximum), (4, -2, 7));
+//! # Ok::<(), krabilorean::Error>(())
+//! ```
 
 pub mod error;
+pub mod online;
+pub mod policy;
+pub mod quality;
 pub mod sample;
 pub mod view;
 
 pub use error::Error;
+pub use quality::Quality;
 
 mod sealed {
+    pub trait OverflowPolicy {}
+
     /// The name of an integer type as it appears in semantic ids: `i8` to `i128` and `u8` to
     /// `u128`. A sample word supplies its own name and its accumulator types' names this way, so
     /// a family composes its id without naming a width.
