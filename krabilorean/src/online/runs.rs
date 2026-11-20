@@ -31,7 +31,6 @@ pub struct ThresholdRuns<O, S> {
     prefix_run: u32,
     current_run: u32,
     longest_run: u32,
-    all_high: bool,
     quality: Quality,
     policy: PhantomData<fn() -> O>,
 }
@@ -43,7 +42,6 @@ struct ThresholdRunsDelta {
     prefix_run: u32,
     current_run: u32,
     longest_run: u32,
-    all_high: bool,
     quality: Quality,
 }
 
@@ -56,7 +54,6 @@ impl<O, S: SampleValue> ThresholdRuns<O, S> {
             prefix_run: 0,
             current_run: 0,
             longest_run: 0,
-            all_high: true,
             quality: Quality::Complete,
             policy: PhantomData,
         }
@@ -94,7 +91,6 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
         self.prefix_run = 0;
         self.current_run = 0;
         self.longest_run = 0;
-        self.all_high = true;
         self.quality = Quality::Complete;
     }
 
@@ -116,8 +112,12 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
                 saturated: false,
             }
         };
-        let all_high = self.all_high && high;
-        let prefix_run = if all_high {
+        // Under `Saturating`, `samples` and `prefix_run` can both saturate at `u32::MAX` before a
+        // low sample resets `current_run`, so `current_run == prefix_run` distinguishes an unbroken
+        // all-high prefix from a saturated prefix followed by a low sample.
+        let all_high = (self.samples == self.prefix_run)
+            & (!O::SATURATING | (self.current_run == self.prefix_run));
+        let prefix_run = if all_high & high {
             current_run
         } else {
             Arithmetic {
@@ -131,7 +131,6 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
             prefix_run: prefix_run.value,
             current_run: current_run.value,
             longest_run,
-            all_high,
             quality: Quality::from_flags(
                 false,
                 self.quality.is_saturated()
@@ -147,7 +146,6 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
         self.prefix_run = delta.prefix_run;
         self.current_run = delta.current_run;
         self.longest_run = delta.longest_run;
-        self.all_high = delta.all_high;
         self.quality = delta.quality;
     }
 
@@ -161,7 +159,6 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
                 prefix_run: self.prefix_run,
                 current_run: self.current_run,
                 longest_run: self.longest_run,
-                all_high: self.all_high,
                 quality: self.quality,
             });
         }
@@ -171,14 +168,25 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
                 prefix_run: newer.prefix_run,
                 current_run: newer.current_run,
                 longest_run: newer.longest_run,
-                all_high: newer.all_high,
                 quality: newer.quality,
             });
         }
 
         let samples = O::add_u32(self.samples, newer.samples)?;
         let bridge = O::add_u32(self.current_run, newer.prefix_run)?;
-        let prefix_run = if self.all_high {
+        // A saturated summary that ended low has `prefix_run == samples == u32::MAX` but a shorter
+        // `current_run`; see `prepare_word`.
+        let self_all_high = if O::SATURATING {
+            self.prefix_run == self.samples && self.current_run == self.prefix_run
+        } else {
+            self.prefix_run == self.samples
+        };
+        let newer_all_high = if O::SATURATING {
+            newer.prefix_run == newer.samples && newer.current_run == newer.prefix_run
+        } else {
+            newer.prefix_run == newer.samples
+        };
+        let prefix_run = if self_all_high {
             O::add_u32(self.samples, newer.prefix_run)?
         } else {
             Arithmetic {
@@ -186,7 +194,7 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
                 saturated: false,
             }
         };
-        let current_run = if newer.all_high {
+        let current_run = if newer_all_high {
             O::add_u32(self.current_run, newer.samples)?
         } else {
             Arithmetic {
@@ -199,7 +207,6 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
             prefix_run: prefix_run.value,
             current_run: current_run.value,
             longest_run: self.longest_run.max(newer.longest_run).max(bridge.value),
-            all_high: self.all_high && newer.all_high,
             quality: Quality::from_flags(
                 false,
                 self.quality.is_saturated()
@@ -327,7 +334,6 @@ mod tests {
             prefix_run: 0,
             current_run: 7,
             longest_run: 7,
-            all_high: false,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -348,7 +354,6 @@ mod tests {
             prefix_run: 3,
             current_run: u32::MAX,
             longest_run: u32::MAX,
-            all_high: false,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -364,7 +369,6 @@ mod tests {
             prefix_run: u32::MAX - 2,
             current_run: 1,
             longest_run: u32::MAX - 2,
-            all_high: true,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -375,7 +379,6 @@ mod tests {
             prefix_run: 3,
             current_run: 2,
             longest_run: 3,
-            all_high: false,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -391,7 +394,6 @@ mod tests {
             prefix_run: 1,
             current_run: u32::MAX - 1,
             longest_run: u32::MAX - 1,
-            all_high: false,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -402,12 +404,13 @@ mod tests {
             prefix_run: 1,
             current_run: 2,
             longest_run: 2,
-            all_high: true,
             quality: Quality::Complete,
             policy: PhantomData,
         };
+        let mut newer_all_high_valid = newer_all_high;
+        newer_all_high_valid.prefix_run = 2;
         assert_eq!(
-            trailing_overflow.merge(&newer_all_high),
+            trailing_overflow.merge(&newer_all_high_valid),
             Err(Error::Overflow)
         );
         assert_eq!(trailing_overflow, before_trailing);
@@ -420,7 +423,6 @@ mod tests {
             prefix_run: u32::MAX,
             current_run: u32::MAX,
             longest_run: u32::MAX,
-            all_high: true,
             quality: Quality::Complete,
             policy: PhantomData,
         };
@@ -459,6 +461,18 @@ mod tests {
                 .snapshot()
                 .map(|s| (s.prefix_run, s.current_run, s.longest_run, s.quality)),
             Some((u32::MAX, 1, u32::MAX, Quality::Saturated))
+        );
+
+        let mut tail_high = ThresholdRuns::<Saturating, S>::new(threshold);
+        tail_high.update(high).expect("tail high");
+        saturating
+            .merge(&tail_high)
+            .expect("merge all-high tail onto broken saturated summary");
+        assert_eq!(
+            saturating
+                .snapshot()
+                .map(|s| (s.prefix_run, s.current_run, s.longest_run, s.quality)),
+            Some((u32::MAX, 2, u32::MAX, Quality::Saturated))
         );
     }
 
