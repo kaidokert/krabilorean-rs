@@ -597,11 +597,15 @@ mod tests {
 
         let mut saturating_min = Minimum::<Saturating, S> {
             samples: u32::MAX,
-            value: low,
+            value: high,
             quality: Quality::Complete,
             policy: PhantomData,
         };
-        saturating_min.update(S::MIN).expect("saturating min");
+        saturating_min.update(low).expect("saturating min");
+        assert_eq!(
+            saturating_min.snapshot().map(|s| (s.value, s.quality)),
+            Some((low, Quality::Saturated))
+        );
         let mut tail_min = Minimum::<Saturating, S>::new();
         tail_min.update(S::MIN).expect("tail min");
         saturating_min.merge(&tail_min).expect("saturating merge");
@@ -612,11 +616,15 @@ mod tests {
 
         let mut saturating_max = Maximum::<Saturating, S> {
             samples: u32::MAX,
-            value: high,
+            value: low,
             quality: Quality::Complete,
             policy: PhantomData,
         };
-        saturating_max.update(S::MAX).expect("saturating max");
+        saturating_max.update(high).expect("saturating max");
+        assert_eq!(
+            saturating_max.snapshot().map(|s| (s.value, s.quality)),
+            Some((high, Quality::Saturated))
+        );
         let mut tail_max = Maximum::<Saturating, S>::new();
         tail_max.update(S::MAX).expect("tail max");
         saturating_max.merge(&tail_max).expect("saturating merge");
