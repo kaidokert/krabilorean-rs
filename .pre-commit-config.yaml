@@ -17,3 +17,12 @@ repos:
   -   id: fmt
       name: Fmt for krabilorean
       args: ['--manifest-path=krabilorean/Cargo.toml', '--']
+
+- repo: local
+  hooks:
+  -   id: krabilorean-clippy
+      name: clippy krabilorean
+      entry: cargo clippy --manifest-path=krabilorean/Cargo.toml --all-targets -- -D warnings
+      language: system
+      pass_filenames: false
+      files: ^krabilorean/.*\.(rs|toml)$
