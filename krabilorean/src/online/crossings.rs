@@ -386,6 +386,98 @@ mod tests {
         assert_eq!(crossings.merge(&newer), Err(Error::Overflow));
         assert_eq!(crossings, full);
 
+        let mut newer_rising = ThresholdCrossings::<Checked, S>::new(threshold);
+        newer_rising.update(low).expect("representable");
+        newer_rising.update(high).expect("representable");
+
+        let mut newer_falling = ThresholdCrossings::<Checked, S>::new(threshold);
+        newer_falling.update(high).expect("representable");
+        newer_falling.update(low).expect("representable");
+
+        // Later counter overflow points while sample-count addition fits.
+        let mut rising_overflow = ThresholdCrossings::<Checked, S> {
+            samples: 10,
+            threshold,
+            crossings: u32::MAX,
+            rising: 4,
+            falling: 3,
+            first_high: false,
+            previous_high: false,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        let before_rising = rising_overflow;
+        assert_eq!(rising_overflow.update(high), Err(Error::Overflow));
+        assert_eq!(rising_overflow, before_rising);
+        assert_eq!(rising_overflow.merge(&newer), Err(Error::Overflow));
+        assert_eq!(rising_overflow, before_rising);
+        assert_eq!(rising_overflow.merge(&newer_rising), Err(Error::Overflow));
+        assert_eq!(rising_overflow, before_rising);
+
+        let mut rising_only_overflow = ThresholdCrossings::<Checked, S> {
+            samples: 10,
+            threshold,
+            crossings: 7,
+            rising: u32::MAX,
+            falling: 3,
+            first_high: false,
+            previous_high: false,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        let before_rising_only = rising_only_overflow;
+        assert_eq!(rising_only_overflow.update(high), Err(Error::Overflow));
+        assert_eq!(rising_only_overflow, before_rising_only);
+        assert_eq!(rising_only_overflow.merge(&newer), Err(Error::Overflow));
+        assert_eq!(rising_only_overflow, before_rising_only);
+        assert_eq!(
+            rising_only_overflow.merge(&newer_rising),
+            Err(Error::Overflow)
+        );
+        assert_eq!(rising_only_overflow, before_rising_only);
+
+        let mut falling_overflow = ThresholdCrossings::<Checked, S> {
+            samples: 10,
+            threshold,
+            crossings: u32::MAX,
+            rising: 4,
+            falling: 3,
+            first_high: true,
+            previous_high: true,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        let before_falling = falling_overflow;
+        assert_eq!(falling_overflow.update(low), Err(Error::Overflow));
+        assert_eq!(falling_overflow, before_falling);
+
+        let mut falling_only_overflow = ThresholdCrossings::<Checked, S> {
+            samples: 10,
+            threshold,
+            crossings: 7,
+            rising: 4,
+            falling: u32::MAX,
+            first_high: true,
+            previous_high: true,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        let before_falling_only = falling_only_overflow;
+        assert_eq!(falling_only_overflow.update(low), Err(Error::Overflow));
+        assert_eq!(falling_only_overflow, before_falling_only);
+        let mut newer_low = ThresholdCrossings::<Checked, S>::new(threshold);
+        newer_low.update(low).expect("representable");
+        assert_eq!(
+            falling_only_overflow.merge(&newer_low),
+            Err(Error::Overflow)
+        );
+        assert_eq!(falling_only_overflow, before_falling_only);
+        assert_eq!(
+            falling_only_overflow.merge(&newer_falling),
+            Err(Error::Overflow)
+        );
+        assert_eq!(falling_only_overflow, before_falling_only);
+
         let mut saturating = ThresholdCrossings::<Saturating, S> {
             samples: u32::MAX,
             threshold,
