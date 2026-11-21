@@ -472,7 +472,8 @@ mod tests {
         let mut saturating_sum = SuccessiveDifference::<Saturating, S> {
             samples: 2,
             differences: 1,
-            absolute_sum: u64::MAX,
+            // One below the limit, so the next difference is what saturates the sum.
+            absolute_sum: u64::MAX - 1,
             first: S::ZERO,
             previous: S::MIN,
             quality: Quality::Complete,
@@ -488,7 +489,8 @@ mod tests {
         let mut saturating_merge = SuccessiveDifference::<Saturating, S> {
             samples: 2,
             differences: 1,
-            absolute_sum: u64::MAX,
+            // One below the limit, so the next difference is what saturates the sum.
+            absolute_sum: u64::MAX - 1,
             first: S::ZERO,
             previous: S::MAX,
             quality: Quality::Complete,
