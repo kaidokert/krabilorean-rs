@@ -33,6 +33,8 @@ pub trait OverflowPolicy: crate::sealed::OverflowPolicy + Copy {
     const SATURATING: bool;
     /// Adds two `u32` counter values.
     fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error>;
+    /// Adds two `u64` accumulator values.
+    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error>;
 }
 
 /// Reject arithmetic overflow and preserve the previous state.
@@ -45,6 +47,13 @@ impl OverflowPolicy for Checked {
     const SATURATING: bool = false;
 
     fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Err(Error::Overflow),
+        }
+    }
+
+    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
         match left.checked_add(right) {
             Some(value) => Ok(Arithmetic::complete(value)),
             None => Err(Error::Overflow),
@@ -67,6 +76,13 @@ impl OverflowPolicy for Saturating {
             None => Ok(Arithmetic::saturated(left.saturating_add(right))),
         }
     }
+
+    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -75,7 +91,7 @@ mod tests {
     use crate::Error;
 
     #[test]
-    fn checked_and_saturating_u32_addition() {
+    fn checked_and_saturating_addition() {
         const { assert!(!<Checked as OverflowPolicy>::SATURATING) };
         const { assert!(<Saturating as OverflowPolicy>::SATURATING) };
 
@@ -98,6 +114,29 @@ mod tests {
             Saturating::add_u32(u32::MAX, 1),
             Ok(Arithmetic {
                 value: u32::MAX,
+                saturated: true,
+            })
+        );
+
+        assert_eq!(
+            Checked::add_u64(10, 20),
+            Ok(Arithmetic {
+                value: 30,
+                saturated: false,
+            })
+        );
+        assert_eq!(Checked::add_u64(u64::MAX, 1), Err(Error::Overflow));
+        assert_eq!(
+            Saturating::add_u64(10, 20),
+            Ok(Arithmetic {
+                value: 30,
+                saturated: false,
+            })
+        );
+        assert_eq!(
+            Saturating::add_u64(u64::MAX, 1),
+            Ok(Arithmetic {
+                value: u64::MAX,
                 saturated: true,
             })
         );
