@@ -19,6 +19,7 @@
 //! # Ok::<(), krabilorean::Error>(())
 //! ```
 
+pub mod arithmetic;
 pub mod error;
 pub mod online;
 pub mod policy;
