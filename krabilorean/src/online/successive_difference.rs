@@ -1,6 +1,7 @@
 //! Constant-state cumulative mean absolute successive difference.
 
 use core::marker::PhantomData;
+use core::num::NonZeroU64;
 
 use crate::arithmetic::UnsignedRatio;
 use crate::policy::{Arithmetic, OverflowPolicy};
@@ -55,13 +56,12 @@ impl<S: SampleWord> SuccessiveDifferenceSnapshot<S> {
 impl<S: Copy> SuccessiveDifferenceSnapshot<S> {
     /// Returns the mean absolute successive difference when at least one difference exists.
     pub const fn mean_absolute(self) -> Option<UnsignedRatio> {
-        if self.differences == 0 {
-            None
-        } else {
-            Some(UnsignedRatio {
+        match NonZeroU64::new(self.differences as u64) {
+            Some(denominator) => Some(UnsignedRatio {
                 numerator: self.absolute_sum,
-                denominator: self.differences as u64,
-            })
+                denominator,
+            }),
+            None => None,
         }
     }
 }
@@ -251,6 +251,7 @@ impl<O: OverflowPolicy, S: SampleWord> SuccessiveDifference<O, S> {
 #[cfg(test)]
 mod tests {
     use core::marker::PhantomData;
+    use core::num::NonZeroU64;
 
     use super::{SuccessiveDifference, SuccessiveDifferenceSnapshot, absolute_sum_fits_u64};
     use crate::arithmetic::UnsignedRatio;
@@ -306,7 +307,7 @@ mod tests {
             two.mean_absolute(),
             Some(UnsignedRatio {
                 numerator: ab,
-                denominator: 1,
+                denominator: NonZeroU64::new(1).expect("nonzero"),
             })
         );
         assert_eq!(two.net_difference(), b.difference(a));
@@ -336,7 +337,7 @@ mod tests {
             merged.mean_absolute(),
             Some(UnsignedRatio {
                 numerator: expected_sum,
-                denominator: 3,
+                denominator: NonZeroU64::new(3).expect("nonzero"),
             })
         );
         assert_eq!(merged.net_difference().into(), 0);
@@ -451,31 +452,60 @@ mod tests {
         assert_eq!(state.merge(&right_two), Err(Error::Overflow));
         assert_eq!(state, sum_full);
 
-        // Saturating update and merge mark quality and preserve saturated counters.
-        let mut saturating = SuccessiveDifference::<Saturating, S> {
+        // Saturating update and merge each independently mark quality from Quality::Complete.
+        let mut saturating_count = SuccessiveDifference::<Saturating, S> {
             samples: u32::MAX,
-            differences: u32::MAX,
-            absolute_sum: u64::MAX - 1,
+            differences: 1,
+            absolute_sum: 0,
             first: S::ZERO,
             previous: S::MIN,
             quality: Quality::Complete,
             policy: PhantomData,
         };
-        saturating.update(S::MAX).expect("saturating update");
-        let snapshot = saturating.snapshot().expect("defined");
+        saturating_count.update(S::MIN).expect("saturating count");
+        let snapshot = saturating_count.snapshot().expect("defined");
         assert_eq!(snapshot.samples, u32::MAX);
-        assert_eq!(snapshot.differences, u32::MAX);
+        assert_eq!(snapshot.differences, 2);
+        assert_eq!(snapshot.absolute_sum, 0);
+        assert_eq!(snapshot.quality, Quality::Saturated);
+
+        let mut saturating_sum = SuccessiveDifference::<Saturating, S> {
+            samples: 2,
+            differences: 1,
+            absolute_sum: u64::MAX,
+            first: S::ZERO,
+            previous: S::MIN,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        saturating_sum.update(S::MAX).expect("saturating sum");
+        let snapshot = saturating_sum.snapshot().expect("defined");
+        assert_eq!(snapshot.samples, 3);
+        assert_eq!(snapshot.differences, 2);
         assert_eq!(snapshot.absolute_sum, u64::MAX);
         assert_eq!(snapshot.quality, Quality::Saturated);
 
+        let mut saturating_merge = SuccessiveDifference::<Saturating, S> {
+            samples: 2,
+            differences: 1,
+            absolute_sum: u64::MAX,
+            first: S::ZERO,
+            previous: S::MAX,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
         let mut tail = SuccessiveDifference::<Saturating, S>::new();
         tail.update(S::MIN).expect("tail min");
-        saturating.merge(&tail).expect("saturating merge");
+        saturating_merge.merge(&tail).expect("saturating merge");
         assert_eq!(
-            saturating
-                .snapshot()
-                .map(|s| (s.absolute_sum, s.last_sample, s.quality)),
-            Some((u64::MAX, S::MIN, Quality::Saturated))
+            saturating_merge.snapshot().map(|s| (
+                s.samples,
+                s.differences,
+                s.absolute_sum,
+                s.last_sample,
+                s.quality
+            )),
+            Some((3, 2, u64::MAX, S::MIN, Quality::Saturated))
         );
     }
 
