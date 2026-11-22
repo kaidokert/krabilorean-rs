@@ -46,7 +46,7 @@
 //! }
 //! ```
 
-use core::num::{NonZeroU32, NonZeroU64};
+use core::num::NonZeroU32;
 
 use crate::arithmetic::{SignedRatio, UnsignedRatio};
 use crate::policy::Accumulator;
@@ -231,12 +231,7 @@ macro_rules! sum_mean {
     (UnsignedRatio, $sum:expr, $samples:expr) => {
         UnsignedRatio {
             numerator: $sum,
-            // `$samples` is `NonZeroU32`, so `$samples.get() >= 1` and `NonZeroU64::MIN` is
-            // unreachable.
-            denominator: match NonZeroU64::new($samples.get() as u64) {
-                Some(denominator) => denominator,
-                None => NonZeroU64::MIN,
-            },
+            denominator: crate::arithmetic::widen_count($samples),
         }
     };
 }
