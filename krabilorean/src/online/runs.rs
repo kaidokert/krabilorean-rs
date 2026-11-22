@@ -74,19 +74,23 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdRuns<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<ThresholdRunsSnapshot<S>> {
-        (self.samples != 0).then_some(ThresholdRunsSnapshot {
-            samples: self.samples,
-            threshold: self.threshold,
-            prefix_run: self.prefix_run,
-            current_run: self.current_run,
-            longest_run: self.longest_run,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<ThresholdRunsSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(ThresholdRunsSnapshot {
+                samples: self.samples,
+                threshold: self.threshold,
+                prefix_run: self.prefix_run,
+                current_run: self.current_run,
+                longest_run: self.longest_run,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears run state while retaining the configured threshold.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.samples = 0;
         self.prefix_run = 0;
         self.current_run = 0;

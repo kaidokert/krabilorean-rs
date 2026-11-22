@@ -61,16 +61,20 @@ impl<O: OverflowPolicy, S: SampleValue> Minimum<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<MinimumSnapshot<S>> {
-        (self.samples != 0).then_some(MinimumSnapshot {
-            samples: self.samples,
-            value: self.value,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<MinimumSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(MinimumSnapshot {
+                samples: self.samples,
+                value: self.value,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears all cumulative state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         *self = Self::new();
     }
 
@@ -185,16 +189,20 @@ impl<O: OverflowPolicy, S: SampleValue> Maximum<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<MaximumSnapshot<S>> {
-        (self.samples != 0).then_some(MaximumSnapshot {
-            samples: self.samples,
-            value: self.value,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<MaximumSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(MaximumSnapshot {
+                samples: self.samples,
+                value: self.value,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears all cumulative state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         *self = Self::new();
     }
 
@@ -314,17 +322,21 @@ impl<O: OverflowPolicy, S: SampleValue> Extrema<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<ExtremaSnapshot<S>> {
-        (self.samples != 0).then_some(ExtremaSnapshot {
-            samples: self.samples,
-            minimum: self.minimum,
-            maximum: self.maximum,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<ExtremaSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(ExtremaSnapshot {
+                samples: self.samples,
+                minimum: self.minimum,
+                maximum: self.maximum,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears all cumulative state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         *self = Self::new();
     }
 

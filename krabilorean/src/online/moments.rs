@@ -120,17 +120,20 @@ impl<O: OverflowPolicy, S: MomentWord> RunningMoments<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<RawMomentsSnapshot<S>> {
-        NonZeroU32::new(self.samples).map(|samples| RawMomentsSnapshot {
-            samples,
-            sum: self.sum,
-            sum_of_squares: self.sum_of_squares,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<RawMomentsSnapshot<S>> {
+        match NonZeroU32::new(self.samples) {
+            Some(samples) => Some(RawMomentsSnapshot {
+                samples,
+                sum: self.sum,
+                sum_of_squares: self.sum_of_squares,
+                quality: self.quality,
+            }),
+            None => None,
+        }
     }
 
     /// Clears all cumulative state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.samples = 0;
         self.sum = <S as MomentWord>::ZERO_SUM;
         self.sum_of_squares = <S as MomentWord>::ZERO_SQUARE_SUM;
@@ -200,51 +203,66 @@ impl<O: OverflowPolicy, S: MomentWord> RunningMoments<O, S> {
     }
 }
 
-impl<S: MomentWord> RawMomentsSnapshot<S> {
-    /// Returns the cumulative mean as an exact ratio when raw moments are complete.
-    ///
-    /// Saturated or approximate raw moments return `None` because the exact mean cannot be
-    /// recovered once counters or sums have saturated.
-    pub fn mean(self) -> Option<<S as MomentWord>::Mean> {
-        if self.quality != Quality::Complete {
-            return None;
+c0nst::c0nst! {
+    impl<S: MomentWord> RawMomentsSnapshot<S> {
+        /// Returns the cumulative mean as an exact ratio, or `None` unless the raw moments are
+        /// complete.
+        ///
+        /// Under [`Saturating`](crate::policy::Saturating) the count and the sum saturate
+        /// separately, so once either has, `sum / samples` is not the mean of the input.
+        pub c0nst fn mean(self) -> Option<<S as MomentWord>::Mean>
+        where
+            S: [c0nst] MomentWord,
+            S::Sum: [c0nst] SumOps<S::SquareSum, S::Mean>,
+        {
+            if !self.quality.is_complete() {
+                return None;
+            }
+            Some(<<S as MomentWord>::Sum as SumOps<_, _>>::mean(
+                self.sum,
+                self.samples,
+            ))
         }
-        Some(<<S as MomentWord>::Sum as SumOps<_, _>>::mean(
-            self.sum,
-            self.samples,
-        ))
-    }
 
-    /// Returns exact cumulative population variance when raw moments are complete and
-    /// consistent.
-    ///
-    /// The numerator is `N * sum(x^2) - sum(x)^2`, which fits `u128` at every width for
-    /// any state the family produces; the denominator is `N^2`, which fits `u64`. An
-    /// inconsistent hand-built snapshot whose terms don't fit returns `None`.
-    /// Saturated or approximate raw moments return `None` because the exact variance cannot be
-    /// recovered from non-exact sums.
-    #[allow(clippy::question_mark)]
-    pub fn population_variance(self) -> Option<UnsignedWideRatio> {
-        if self.quality != Quality::Complete {
-            return None;
+        /// Returns exact cumulative population variance when raw moments are complete and
+        /// consistent.
+        ///
+        /// The numerator is `N * sum(x^2) - sum(x)^2`, which fits `u128` at every width for
+        /// any state the family produces; the denominator is `N^2`, which fits `u64`. An
+        /// inconsistent hand-built snapshot whose terms don't fit returns `None`.
+        /// Saturated or approximate raw moments return `None` because the exact variance cannot be
+        /// recovered from non-exact sums.
+        #[allow(clippy::question_mark)]
+        pub c0nst fn population_variance(self) -> Option<UnsignedWideRatio>
+        where
+            S: [c0nst] MomentWord,
+            S::Sum: [c0nst] SumOps<S::SquareSum, S::Mean>,
+            S::SquareSum: [c0nst] SquareSumOps,
+        {
+            if !self.quality.is_complete() {
+                return None;
+            }
+            let scaled_squares = match SquareSumOps::scaled(self.sum_of_squares, self.samples) {
+                Some(value) => value,
+                None => return None,
+            };
+            let magnitude = <<S as MomentWord>::Sum as SumOps<_, _>>::magnitude(self.sum);
+            let sum_square = magnitude * magnitude;
+            let numerator = match scaled_squares.checked_sub(sum_square) {
+                Some(value) => value,
+                None => return None,
+            };
+            let samples_u64 = match NonZeroU64::new(self.samples.get() as u64) {
+                Some(samples) => samples,
+                None => NonZeroU64::MIN,
+            };
+            // `samples <= u32::MAX`, so `samples^2 < 2^64` and the product never saturates.
+            let denominator = samples_u64.saturating_mul(samples_u64);
+            Some(UnsignedWideRatio {
+                numerator,
+                denominator,
+            })
         }
-        let scaled_squares = match SquareSumOps::scaled(self.sum_of_squares, self.samples) {
-            Some(value) => value,
-            None => return None,
-        };
-        let magnitude = <<S as MomentWord>::Sum as SumOps<_, _>>::magnitude(self.sum);
-        let sum_square = magnitude * magnitude;
-        let numerator = match scaled_squares.checked_sub(sum_square) {
-            Some(value) => value,
-            None => return None,
-        };
-        let samples_u64 = NonZeroU64::from(self.samples);
-        // `samples <= u32::MAX`, so `samples^2 < 2^64` and the product never saturates.
-        let denominator = samples_u64.saturating_mul(samples_u64);
-        Some(UnsignedWideRatio {
-            numerator,
-            denominator,
-        })
     }
 }
 
@@ -701,6 +719,34 @@ mod tests {
         assert_eq!(
             size_of::<Option<RawMomentsSnapshot<i16>>>(),
             size_of::<RawMomentsSnapshot<i16>>()
+        );
+    }
+
+    #[cfg(feature = "nightly")]
+    #[test]
+    fn c0nst_snapshot_queries_are_const_evaluable_on_nightly() {
+        const SNAPSHOT: RawMomentsSnapshot<i16> = RawMomentsSnapshot {
+            samples: NonZeroU32::new(2).unwrap(),
+            sum: 6,
+            sum_of_squares: 20,
+            quality: Quality::Complete,
+        };
+        const MEAN: Option<SignedRatio> = SNAPSHOT.mean();
+        const VARIANCE: Option<crate::arithmetic::UnsignedWideRatio> =
+            SNAPSHOT.population_variance();
+        assert_eq!(
+            MEAN,
+            Some(SignedRatio {
+                numerator: 6,
+                denominator: NonZeroU32::new(2).unwrap(),
+            })
+        );
+        assert_eq!(
+            VARIANCE,
+            Some(UnsignedRatio {
+                numerator: 4,
+                denominator: NonZeroU64::new(4).unwrap(),
+            })
         );
     }
 }
