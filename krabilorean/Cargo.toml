@@ -8,4 +8,8 @@ readme = "../README.md"
 keywords = ["no-std", "embedded", "time-series", "statistics", "signal"]
 categories = ["embedded", "no-std"]
 
+[features]
+nightly = ["c0nst/nightly"]
+
 [dependencies]
+c0nst = { version = "0.2.1", default-features = false }

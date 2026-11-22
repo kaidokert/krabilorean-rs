@@ -24,6 +24,11 @@ impl Quality {
         }
     }
 
+    /// Returns whether the result completed without saturation or approximation.
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+
     /// Returns whether any arithmetic operation saturated.
     pub const fn is_saturated(self) -> bool {
         matches!(self, Self::Saturated | Self::ApproximateSaturated)
@@ -58,6 +63,7 @@ mod tests {
         for (approximate, saturated, expected) in cases {
             let quality = Quality::from_flags(approximate, saturated);
             assert_eq!(quality, expected);
+            assert_eq!(quality.is_complete(), !approximate && !saturated);
             assert_eq!(quality.is_approximate(), approximate);
             assert_eq!(quality.is_saturated(), saturated);
             assert_eq!(Quality::Complete.combine(quality), quality);

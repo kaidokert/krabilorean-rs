@@ -41,15 +41,20 @@ pub struct SuccessiveDifferenceSnapshot<S> {
     pub quality: Quality,
 }
 
-impl<S: SampleWord> SuccessiveDifferenceSnapshot<S> {
-    /// Returns the sum of the signed successive differences, `last_sample - first_sample`.
-    ///
-    /// The signed differences telescope, so their sum is exact without any accumulator. It is
-    /// [`SampleWord::Difference`]: `i16`, `i32` or `i64` for 8-, 16- and 32-bit words. A difference
-    /// of unsigned words can be negative, so for `u8`, `u16` and `u32` this is a signed type one
-    /// size up, never the word itself.
-    pub fn net_difference(self) -> S::Difference {
-        self.last_sample.difference(self.first_sample)
+c0nst::c0nst! {
+    impl<S: SampleWord> SuccessiveDifferenceSnapshot<S> {
+        /// Returns the sum of the signed successive differences, `last_sample - first_sample`.
+        ///
+        /// The signed differences telescope, so their sum is exact without any accumulator. It is
+        /// [`SampleWord::Difference`]: `i16`, `i32` or `i64` for 8-, 16- and 32-bit words. A difference
+        /// of unsigned words can be negative, so for `u8`, `u16` and `u32` this is a signed type one
+        /// size up, never the word itself.
+        pub c0nst fn net_difference(self) -> S::Difference
+        where
+            S: [c0nst] SampleWord,
+        {
+            self.last_sample.difference(self.first_sample)
+        }
     }
 }
 
@@ -127,19 +132,23 @@ impl<O: OverflowPolicy, S: SampleWord> SuccessiveDifference<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<SuccessiveDifferenceSnapshot<S>> {
-        (self.samples != 0).then_some(SuccessiveDifferenceSnapshot {
-            samples: self.samples,
-            differences: self.differences,
-            absolute_sum: self.absolute_sum,
-            first_sample: self.first,
-            last_sample: self.previous,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<SuccessiveDifferenceSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(SuccessiveDifferenceSnapshot {
+                samples: self.samples,
+                differences: self.differences,
+                absolute_sum: self.absolute_sum,
+                first_sample: self.first,
+                last_sample: self.previous,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears all cumulative state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         *self = Self::new();
     }
 
@@ -519,5 +528,20 @@ mod tests {
         every_width_fails_transactionally::<u8>();
         every_width_fails_transactionally::<u16>();
         every_width_fails_transactionally::<u32>();
+    }
+
+    #[cfg(feature = "nightly")]
+    #[test]
+    fn c0nst_net_difference_is_const_evaluable_on_nightly() {
+        const SNAPSHOT: SuccessiveDifferenceSnapshot<u16> = SuccessiveDifferenceSnapshot {
+            samples: 3,
+            differences: 2,
+            absolute_sum: 30,
+            first_sample: 25,
+            last_sample: 5,
+            quality: Quality::Complete,
+        };
+        const NET: i32 = SNAPSHOT.net_difference();
+        assert_eq!(NET, -20);
     }
 }

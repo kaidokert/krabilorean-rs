@@ -84,21 +84,25 @@ impl<O: OverflowPolicy, S: SampleValue> ThresholdCrossings<O, S> {
     }
 
     /// Returns `None` until the first sample is accepted.
-    pub fn snapshot(&self) -> Option<ThresholdCrossingsSnapshot<S>> {
-        (self.samples != 0).then_some(ThresholdCrossingsSnapshot {
-            samples: self.samples,
-            threshold: self.threshold,
-            crossings: self.crossings,
-            rising: self.rising,
-            falling: self.falling,
-            first_high: self.first_high,
-            current_high: self.previous_high,
-            quality: self.quality,
-        })
+    pub const fn snapshot(&self) -> Option<ThresholdCrossingsSnapshot<S>> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(ThresholdCrossingsSnapshot {
+                samples: self.samples,
+                threshold: self.threshold,
+                crossings: self.crossings,
+                rising: self.rising,
+                falling: self.falling,
+                first_high: self.first_high,
+                current_high: self.previous_high,
+                quality: self.quality,
+            })
+        }
     }
 
     /// Clears counts while retaining the configured threshold.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.samples = 0;
         self.crossings = 0;
         self.rising = 0;

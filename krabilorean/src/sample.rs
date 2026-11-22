@@ -51,90 +51,92 @@ use core::num::{NonZeroU32, NonZeroU64};
 use crate::arithmetic::{SignedRatio, UnsignedRatio};
 use crate::policy::Accumulator;
 
-/// A totally ordered sample type: what the comparison-only families need.
-///
-/// The trait is sealed. `Ord` is required, not `PartialOrd`: every sample must compare with every
-/// other, or a minimum, a crossing or a run could silently skip a value.
-pub trait SampleValue: crate::sealed::SampleValue + Copy + Ord + core::fmt::Debug {
-    /// Smallest value.
-    const MIN: Self;
-    /// Largest value.
-    const MAX: Self;
-    /// Zero.
-    const ZERO: Self;
-}
+c0nst::c0nst! {
+    /// A totally ordered sample type: what the comparison-only families need.
+    ///
+    /// The trait is sealed. `Ord` is required, not `PartialOrd`: every sample must compare with every
+    /// other, or a minimum, a crossing or a run could silently skip a value.
+    pub c0nst trait SampleValue: [c0nst] crate::sealed::SampleValue + Copy + Ord + core::fmt::Debug {
+        /// Smallest value.
+        const MIN: Self;
+        /// Largest value.
+        const MAX: Self;
+        /// Zero.
+        const ZERO: Self;
+    }
 
-/// An integer sample type with its width-dependent limits.
-///
-/// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-/// `u32` implement it. Its limits `MIN`, `MAX` and `ZERO` come from [`SampleValue`].
-pub trait SampleWord: crate::sealed::SampleWord + SampleValue {
-    /// Width of the word in bits.
-    const BITS: u32;
-    /// Largest `F` for which `(MAX - MIN) << F` fits `i64`, so a Q-format sample and the
-    /// difference of two Q-format samples cannot overflow `i64` at `F` fractional bits.
-    const I64_Q_HEADROOM_BITS: u32;
-    /// Fractional bits of the word's sample units: `0` for an integer word.
-    const FRACTIONAL_BITS: u32;
+    /// An integer sample type with its width-dependent limits.
+    ///
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
+    /// `u32` implement it. Its limits `MIN`, `MAX` and `ZERO` come from [`SampleValue`].
+    pub c0nst trait SampleWord: [c0nst] crate::sealed::SampleWord + [c0nst] SampleValue {
+        /// Width of the word in bits.
+        const BITS: u32;
+        /// Largest `F` for which `(MAX - MIN) << F` fits `i64`, so a Q-format sample and the
+        /// difference of two Q-format samples cannot overflow `i64` at `F` fractional bits.
+        const I64_Q_HEADROOM_BITS: u32;
+        /// Fractional bits of the word's sample units: `0` for an integer word.
+        const FRACTIONAL_BITS: u32;
 
-    /// Exact widening to `i64`, which holds every word.
-    fn to_i64(self) -> i64;
-    /// Exact narrowing from `i64`, or `None` outside the word.
-    fn try_from_i64(value: i64) -> Option<Self>;
+        /// Exact widening to `i64`, which holds every word.
+        fn to_i64(self) -> i64;
+        /// Exact narrowing from `i64`, or `None` outside the word.
+        fn try_from_i64(value: i64) -> Option<Self>;
 
-    /// Signed type that holds every difference `a - b` of two words: `i16`, `i32` and `i64` for
-    /// the 8-, 16- and 32-bit words, signed or unsigned. A difference of two unsigned words can be
-    /// negative, so it is never the word itself.
-    type Difference: Copy + Ord + core::fmt::Debug + Into<i64>;
+        /// Signed type that holds every difference `a - b` of two words: `i16`, `i32` and `i64` for
+        /// the 8-, 16- and 32-bit words, signed or unsigned. A difference of two unsigned words can be
+        /// negative, so it is never the word itself.
+        type Difference: Copy + Ord + core::fmt::Debug + Into<i64>;
 
-    /// Exact signed difference `self - other`.
-    fn difference(self, other: Self) -> Self::Difference;
-}
+        /// Exact signed difference `self - other`.
+        fn difference(self, other: Self) -> Self::Difference;
+    }
 
-/// A sample word with the sum and square-sum types that raw moments need.
-///
-/// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-/// `u32` implement it. A signed word's sums are signed and an unsigned word's are unsigned, each
-/// proven from the word's extremes to hold [`Self::MAX_PROVEN_SAMPLES`] samples; see the module
-/// table.
-pub trait MomentWord: SampleWord + crate::sealed::MomentWord {
-    /// Type holding the sum of [`Self::MAX_PROVEN_SAMPLES`] words: signed for a signed word,
-    /// unsigned for an unsigned one.
-    type Sum: Copy
-        + Ord
-        + core::fmt::Debug
-        + Into<i128>
-        + Accumulator
-        + crate::sealed::IntegerName
-        + crate::sealed::SumOps<Self::SquareSum, Self::Mean>;
-    /// Unsigned type holding the sum of the squares of [`Self::MAX_PROVEN_SAMPLES`] words.
-    type SquareSum: Copy
-        + Ord
-        + core::fmt::Debug
-        + Into<u128>
-        + From<u64>
-        + Accumulator
-        + crate::sealed::IntegerName
-        + crate::sealed::SquareSumOps;
-    /// The exact mean `sum / N`: [`SignedRatio`] for a signed word and [`UnsignedRatio`] for an
-    /// unsigned one.
-    type Mean: Copy + Eq + core::fmt::Debug;
-    /// Largest sample count for which [`Self::Sum`] and [`Self::SquareSum`] are proven to hold
-    /// their sums.
-    const MAX_PROVEN_SAMPLES: u32;
-    /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] words needs: [`sum_bits`] of `BITS`, signed,
-    /// for a signed word, and [`unsigned_sum_bits`] for an unsigned one.
-    const SUM_BITS: u32;
-    /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] squares needs: [`square_sum_bits`] of `BITS`
-    /// for a signed word, and [`unsigned_square_sum_bits`] for an unsigned one.
-    const SQUARE_SUM_BITS: u32;
-    /// Zero of [`Self::Sum`], usable in `const` code.
-    const ZERO_SUM: Self::Sum;
-    /// Zero of [`Self::SquareSum`], usable in `const` code.
-    const ZERO_SQUARE_SUM: Self::SquareSum;
+    /// A sample word with the sum and square-sum types that raw moments need.
+    ///
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
+    /// `u32` implement it. A signed word's sums are signed and an unsigned word's are unsigned, each
+    /// proven from the word's extremes to hold [`Self::MAX_PROVEN_SAMPLES`] samples; see the module
+    /// table.
+    pub c0nst trait MomentWord: [c0nst] SampleWord + [c0nst] crate::sealed::MomentWord {
+        /// Type holding the sum of [`Self::MAX_PROVEN_SAMPLES`] words: signed for a signed word,
+        /// unsigned for an unsigned one.
+        type Sum: Copy
+            + Ord
+            + core::fmt::Debug
+            + Into<i128>
+            + [c0nst] Accumulator
+            + crate::sealed::IntegerName
+            + [c0nst] crate::sealed::SumOps<Self::SquareSum, Self::Mean>;
+        /// Unsigned type holding the sum of the squares of [`Self::MAX_PROVEN_SAMPLES`] words.
+        type SquareSum: Copy
+            + Ord
+            + core::fmt::Debug
+            + Into<u128>
+            + From<u64>
+            + [c0nst] Accumulator
+            + crate::sealed::IntegerName
+            + [c0nst] crate::sealed::SquareSumOps;
+        /// The exact mean `sum / N`: [`SignedRatio`] for a signed word and [`UnsignedRatio`] for an
+        /// unsigned one.
+        type Mean: Copy + Eq + core::fmt::Debug;
+        /// Largest sample count for which [`Self::Sum`] and [`Self::SquareSum`] are proven to hold
+        /// their sums.
+        const MAX_PROVEN_SAMPLES: u32;
+        /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] words needs: [`sum_bits`] of `BITS`, signed,
+        /// for a signed word, and [`unsigned_sum_bits`] for an unsigned one.
+        const SUM_BITS: u32;
+        /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] squares needs: [`square_sum_bits`] of `BITS`
+        /// for a signed word, and [`unsigned_square_sum_bits`] for an unsigned one.
+        const SQUARE_SUM_BITS: u32;
+        /// Zero of [`Self::Sum`], usable in `const` code.
+        const ZERO_SUM: Self::Sum;
+        /// Zero of [`Self::SquareSum`], usable in `const` code.
+        const ZERO_SQUARE_SUM: Self::SquareSum;
 
-    /// Exact widening of one word into [`Self::Sum`].
-    fn to_sum(self) -> Self::Sum;
+        /// Exact widening of one word into [`Self::Sum`].
+        fn to_sum(self) -> Self::Sum;
+    }
 }
 
 /// Signed bits that hold the sum of `u32::MAX` words of `bits` bits.
@@ -187,20 +189,22 @@ integer_name!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
 
 macro_rules! sum_ops {
     ($($sum:ty => $mean:ident: $($square:ty),*);* $(;)?) => {$($(
-        impl crate::sealed::SumOps<$square, $mean> for $sum {
-            #[inline(always)]
-            fn square(self, _: crate::sealed::Internal) -> $square {
-                (self * self) as $square
-            }
+        c0nst::c0nst! {
+            c0nst impl crate::sealed::SumOps<$square, $mean> for $sum {
+                #[inline(always)]
+                fn square(self, _: crate::sealed::Internal) -> $square {
+                    (self * self) as $square
+                }
 
-            #[inline(always)]
-            fn magnitude(self) -> u128 {
-                sum_magnitude!($mean, self)
-            }
+                #[inline(always)]
+                fn magnitude(self) -> u128 {
+                    sum_magnitude!($mean, self)
+                }
 
-            #[inline(always)]
-            fn mean(self, samples: NonZeroU32) -> $mean {
-                sum_mean!($mean, self, samples)
+                #[inline(always)]
+                fn mean(self, samples: NonZeroU32) -> $mean {
+                    sum_mean!($mean, self, samples)
+                }
             }
         }
     )*)*};
@@ -227,25 +231,32 @@ macro_rules! sum_mean {
     (UnsignedRatio, $sum:expr, $samples:expr) => {
         UnsignedRatio {
             numerator: $sum,
-            denominator: NonZeroU64::from($samples),
+            // `$samples` is `NonZeroU32`, so `$samples.get() >= 1` and `NonZeroU64::MIN` is
+            // unreachable.
+            denominator: match NonZeroU64::new($samples.get() as u64) {
+                Some(denominator) => denominator,
+                None => NonZeroU64::MIN,
+            },
         }
     };
 }
 
 sum_ops!(i64 => SignedRatio: u64, u128; u64 => UnsignedRatio: u64, u128);
 
-impl crate::sealed::SquareSumOps for u64 {
-    #[inline(always)]
-    fn scaled(self, samples: NonZeroU32) -> Option<u128> {
-        // Below `2^96`, so the product is exact.
-        Some(u128::from(samples.get()) * u128::from(self))
+c0nst::c0nst! {
+    c0nst impl crate::sealed::SquareSumOps for u64 {
+        #[inline(always)]
+        fn scaled(self, samples: NonZeroU32) -> Option<u128> {
+            // Below `2^96`, so the product is exact.
+            Some((samples.get() as u128) * (self as u128))
+        }
     }
-}
 
-impl crate::sealed::SquareSumOps for u128 {
-    #[inline(always)]
-    fn scaled(self, samples: NonZeroU32) -> Option<u128> {
-        u128::from(samples.get()).checked_mul(self)
+    c0nst impl crate::sealed::SquareSumOps for u128 {
+        #[inline(always)]
+        fn scaled(self, samples: NonZeroU32) -> Option<u128> {
+            (samples.get() as u128).checked_mul(self)
+        }
     }
 }
 
@@ -258,70 +269,76 @@ macro_rules! sample_word {
         const _: () = assert!(<$sum>::BITS >= $sum_bits_fn(<$word>::BITS));
         const _: () = assert!(<$square_sum>::BITS >= $square_sum_bits_fn(<$word>::BITS));
 
-        impl crate::sealed::SampleValue for $word {
-            #[inline(always)]
-            fn above(self, threshold: Self) -> bool {
-                self > threshold
+        c0nst::c0nst! {
+            c0nst impl crate::sealed::SampleValue for $word {
+                #[inline(always)]
+                fn above(self, threshold: Self) -> bool {
+                    self > threshold
+                }
+
+                #[inline(always)]
+                fn at_or_above(self, threshold: Self) -> bool {
+                    self >= threshold
+                }
             }
 
-            #[inline(always)]
-            fn at_or_above(self, threshold: Self) -> bool {
-                self >= threshold
-            }
-        }
-
-        impl crate::sealed::SampleWord for $word {
-            #[inline(always)]
-            fn absolute_difference(self, other: Self) -> u64 {
-                u64::from(self.abs_diff(other))
-            }
-        }
-
-        impl crate::sealed::MomentWord for $word {}
-
-        impl SampleValue for $word {
-            const MIN: Self = <$word>::MIN;
-            const MAX: Self = <$word>::MAX;
-            const ZERO: Self = 0;
-        }
-
-        impl SampleWord for $word {
-            const BITS: u32 = <$word>::BITS;
-            const I64_Q_HEADROOM_BITS: u32 = i64_q_headroom_bits(<$word>::BITS);
-            const FRACTIONAL_BITS: u32 = 0;
-
-            #[inline(always)]
-            fn to_i64(self) -> i64 {
-                i64::from(self)
+            c0nst impl crate::sealed::SampleWord for $word {
+                #[inline(always)]
+                fn absolute_difference(self, other: Self) -> u64 {
+                    self.abs_diff(other) as u64
+                }
             }
 
-            #[inline(always)]
-            fn try_from_i64(value: i64) -> Option<Self> {
-                <$word>::try_from(value).ok()
+            c0nst impl crate::sealed::MomentWord for $word {}
+
+            c0nst impl SampleValue for $word {
+                const MIN: Self = <$word>::MIN;
+                const MAX: Self = <$word>::MAX;
+                const ZERO: Self = 0;
             }
 
-            type Difference = $difference;
+            c0nst impl SampleWord for $word {
+                const BITS: u32 = <$word>::BITS;
+                const I64_Q_HEADROOM_BITS: u32 = i64_q_headroom_bits(<$word>::BITS);
+                const FRACTIONAL_BITS: u32 = 0;
 
-            #[inline(always)]
-            fn difference(self, other: Self) -> $difference {
-                // Both operands fit `Difference`, and so does their difference.
-                <$difference>::from(self) - <$difference>::from(other)
+                #[inline(always)]
+                fn to_i64(self) -> i64 {
+                    self as i64
+                }
+
+                #[inline(always)]
+                fn try_from_i64(value: i64) -> Option<Self> {
+                    if value >= (<$word>::MIN as i64) && value <= (<$word>::MAX as i64) {
+                        Some(value as Self)
+                    } else {
+                        None
+                    }
+                }
+
+                type Difference = $difference;
+
+                #[inline(always)]
+                fn difference(self, other: Self) -> $difference {
+                    // Both operands fit `Difference`, and so does their difference.
+                    (self as $difference) - (other as $difference)
+                }
             }
-        }
 
-        impl MomentWord for $word {
-            type Sum = $sum;
-            type SquareSum = $square_sum;
-            type Mean = $mean;
-            const MAX_PROVEN_SAMPLES: u32 = u32::MAX;
-            const SUM_BITS: u32 = $sum_bits_fn(<$word>::BITS);
-            const SQUARE_SUM_BITS: u32 = $square_sum_bits_fn(<$word>::BITS);
-            const ZERO_SUM: $sum = 0;
-            const ZERO_SQUARE_SUM: $square_sum = 0;
+            c0nst impl MomentWord for $word {
+                type Sum = $sum;
+                type SquareSum = $square_sum;
+                type Mean = $mean;
+                const MAX_PROVEN_SAMPLES: u32 = u32::MAX;
+                const SUM_BITS: u32 = $sum_bits_fn(<$word>::BITS);
+                const SQUARE_SUM_BITS: u32 = $square_sum_bits_fn(<$word>::BITS);
+                const ZERO_SUM: $sum = 0;
+                const ZERO_SQUARE_SUM: $square_sum = 0;
 
-            #[inline(always)]
-            fn to_sum(self) -> $sum {
-                <$sum>::from(self)
+                #[inline(always)]
+                fn to_sum(self) -> $sum {
+                    self as $sum
+                }
             }
         }
     };
@@ -567,5 +584,18 @@ mod tests {
         check_word_conversions_and_differences::<u8>("u8");
         check_word_conversions_and_differences::<u16>("u16");
         check_word_conversions_and_differences::<u32>("u32");
+    }
+
+    #[cfg(feature = "nightly")]
+    #[test]
+    fn c0nst_word_operations_are_const_evaluable_on_nightly() {
+        const WIDE: i64 = <i16 as SampleWord>::to_i64(-12);
+        const NARROW: Option<i16> = <i16 as SampleWord>::try_from_i64(WIDE);
+        const DIFF: i32 = <i16 as SampleWord>::difference(10, -12);
+        const SUM: i64 = <i16 as MomentWord>::to_sum(-12);
+        assert_eq!(WIDE, -12);
+        assert_eq!(NARROW, Some(-12));
+        assert_eq!(DIFF, 22);
+        assert_eq!(SUM, -12);
     }
 }

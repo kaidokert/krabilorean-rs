@@ -27,39 +27,43 @@ impl<T> Arithmetic<T> {
     }
 }
 
-/// Static policy for counter and accumulator arithmetic that may overflow.
-pub trait OverflowPolicy: crate::sealed::OverflowPolicy + Copy {
-    /// Whether counter/addition overflow is accepted with visible saturation quality.
-    const SATURATING: bool;
-    /// Adds two `u32` counter values.
-    fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error>;
-    /// Adds two `u64` accumulator values.
-    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error>;
-    /// Adds two `i64` accumulator values.
-    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error>;
-    /// Adds two `u128` accumulator values.
-    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error>;
-}
+c0nst::c0nst! {
+    /// Static policy for counter and accumulator arithmetic that may overflow.
+    pub c0nst trait OverflowPolicy: [c0nst] crate::sealed::OverflowPolicy + Copy {
+        /// Whether counter/addition overflow is accepted with visible saturation quality.
+        const SATURATING: bool;
+        /// Adds two `u32` counter values.
+        fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error>;
+        /// Adds two `u64` accumulator values.
+        fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error>;
+        /// Adds two `i64` accumulator values.
+        fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error>;
+        /// Adds two `u128` accumulator values.
+        fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error>;
+    }
 
-/// An integer accumulator whose addition an [`OverflowPolicy`] controls: `u32`, `u64`, `i64`,
-/// and `u128`.
-///
-/// A family that accumulates in a type chosen by its sample word, such as
-/// [`MomentWord::Sum`](crate::sample::MomentWord::Sum), adds through this trait without
-/// specializing per accumulator width. The trait is sealed.
-pub trait Accumulator: crate::sealed::Accumulator + Copy {
-    /// Adds two values under the overflow policy `O`.
-    fn add<O: OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error>;
+    /// An integer accumulator whose addition an [`OverflowPolicy`] controls: `u32`, `u64`, `i64`,
+    /// and `u128`.
+    ///
+    /// A family that accumulates in a type chosen by its sample word, such as
+    /// [`MomentWord::Sum`](crate::sample::MomentWord::Sum), adds through this trait without
+    /// specializing per accumulator width. The trait is sealed.
+    pub c0nst trait Accumulator: [c0nst] crate::sealed::Accumulator + Copy {
+        /// Adds two values under the overflow policy `O`.
+        fn add<O: [c0nst] OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error>;
+    }
 }
 
 macro_rules! accumulator {
     ($($type:ty => $add:ident),* $(,)?) => {$(
-        impl crate::sealed::Accumulator for $type {}
+        c0nst::c0nst! {
+            c0nst impl crate::sealed::Accumulator for $type {}
 
-        impl Accumulator for $type {
-            #[inline(always)]
-            fn add<O: OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error> {
-                O::$add(left, right)
+            c0nst impl Accumulator for $type {
+                #[inline(always)]
+                fn add<O: [c0nst] OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error> {
+                    O::$add(left, right)
+                }
             }
         }
     )*};
@@ -71,36 +75,38 @@ accumulator!(u32 => add_u32, u64 => add_u64, i64 => add_i64, u128 => add_u128);
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Checked;
 
-impl crate::sealed::OverflowPolicy for Checked {}
+c0nst::c0nst! {
+    c0nst impl crate::sealed::OverflowPolicy for Checked {}
 
-impl OverflowPolicy for Checked {
-    const SATURATING: bool = false;
+    c0nst impl OverflowPolicy for Checked {
+        const SATURATING: bool = false;
 
-    fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Err(Error::Overflow),
+        fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Err(Error::Overflow),
+            }
         }
-    }
 
-    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Err(Error::Overflow),
+        fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Err(Error::Overflow),
+            }
         }
-    }
 
-    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Err(Error::Overflow),
+        fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Err(Error::Overflow),
+            }
         }
-    }
 
-    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Err(Error::Overflow),
+        fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Err(Error::Overflow),
+            }
         }
     }
 }
@@ -109,36 +115,38 @@ impl OverflowPolicy for Checked {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Saturating;
 
-impl crate::sealed::OverflowPolicy for Saturating {}
+c0nst::c0nst! {
+    c0nst impl crate::sealed::OverflowPolicy for Saturating {}
 
-impl OverflowPolicy for Saturating {
-    const SATURATING: bool = true;
+    c0nst impl OverflowPolicy for Saturating {
+        const SATURATING: bool = true;
 
-    fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+            }
         }
-    }
 
-    fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+            }
         }
-    }
 
-    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+            }
         }
-    }
 
-    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
-        match left.checked_add(right) {
-            Some(value) => Ok(Arithmetic::complete(value)),
-            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+            }
         }
     }
 }
@@ -249,6 +257,29 @@ mod tests {
             Saturating::add_u128(u128::MAX, 1),
             Ok(Arithmetic {
                 value: u128::MAX,
+                saturated: true,
+            })
+        );
+    }
+
+    #[cfg(feature = "nightly")]
+    #[test]
+    fn c0nst_overflow_policy_and_accumulator_are_const_evaluable_on_nightly() {
+        const CHECKED_U32: Result<Arithmetic<u32>, Error> =
+            <u32 as Accumulator>::add::<Checked>(20, 22);
+        const SATURATED_I64: Result<Arithmetic<i64>, Error> =
+            <i64 as Accumulator>::add::<Saturating>(i64::MAX, 1);
+        assert_eq!(
+            CHECKED_U32,
+            Ok(Arithmetic {
+                value: 42,
+                saturated: false,
+            })
+        );
+        assert_eq!(
+            SATURATED_I64,
+            Ok(Arithmetic {
+                value: i64::MAX,
                 saturated: true,
             })
         );

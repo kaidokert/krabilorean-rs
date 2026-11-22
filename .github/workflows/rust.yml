@@ -54,8 +54,20 @@ jobs:
       with:
         key: ${{ matrix.toolchain }}
     - name: Clippy
-      run: cargo clippy --manifest-path=krabilorean/Cargo.toml --all-targets -- -D warnings
+      run: |
+        cargo clippy --manifest-path=krabilorean/Cargo.toml --all-targets -- -D warnings
+        if [ "${{ matrix.toolchain }}" = "nightly" ]; then
+          cargo clippy --manifest-path=krabilorean/Cargo.toml --all-targets --all-features -- -D warnings
+        fi
     - name: Build
-      run: cargo build --manifest-path=krabilorean/Cargo.toml --verbose
+      run: |
+        cargo build --manifest-path=krabilorean/Cargo.toml --verbose
+        if [ "${{ matrix.toolchain }}" = "nightly" ]; then
+          cargo build --manifest-path=krabilorean/Cargo.toml --all-features --verbose
+        fi
     - name: Test
-      run: cargo test --manifest-path=krabilorean/Cargo.toml
+      run: |
+        cargo test --manifest-path=krabilorean/Cargo.toml
+        if [ "${{ matrix.toolchain }}" = "nightly" ]; then
+          cargo test --manifest-path=krabilorean/Cargo.toml --all-features
+        fi
