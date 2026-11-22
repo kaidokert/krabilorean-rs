@@ -22,6 +22,7 @@
 
 pub mod arithmetic;
 pub mod error;
+pub mod float;
 pub mod online;
 pub mod policy;
 pub mod quality;

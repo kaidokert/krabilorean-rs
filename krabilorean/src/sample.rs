@@ -4,7 +4,8 @@
 //! The traits are split by what a family needs:
 //!
 //! - [`SampleValue`] holds the order and extremes (`MIN`, `MAX`, `ZERO`) that comparison-only
-//!   families need.
+//!   families need. Every [`SampleWord`] implements it, as do the NaN-free floats
+//!   [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`.
 //! - [`SampleWord`] adds the width facts every integer sample family may use: `BITS`, exact `i64`
 //!   conversions, the Q-format headroom, and the exact signed difference type
 //!   [`SampleWord::Difference`].
@@ -12,7 +13,8 @@
 //!   word, each proven for `u32::MAX` samples.
 //!
 //! All traits are sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-//! `u32` implement them.
+//! `u32` implement every trait, and [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`
+//! implement [`SampleValue`].
 //!
 //! Accumulator widths are formulas of the word's `BITS`, each checked against its type at compile
 //! time for every word:
@@ -54,9 +56,17 @@ use crate::policy::Accumulator;
 c0nst::c0nst! {
     /// A totally ordered sample type: what the comparison-only families need.
     ///
+    /// [`Minimum`](crate::online::Minimum), [`Maximum`](crate::online::Maximum),
+    /// [`Extrema`](crate::online::Extrema), [`ThresholdCrossings`](crate::online::ThresholdCrossings),
+    /// and [`ThresholdRuns`](crate::online::ThresholdRuns) only compare samples, so they take any
+    /// `SampleValue`. Every [`SampleWord`] is one, as are the NaN-free floats
+    /// [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`.
+    ///
     /// The trait is sealed. `Ord` is required, not `PartialOrd`: every sample must compare with every
     /// other, or a minimum, a crossing or a run could silently skip a value.
-    pub c0nst trait SampleValue: [c0nst] crate::sealed::SampleValue + Copy + Ord + core::fmt::Debug {
+    pub c0nst trait SampleValue:
+        [c0nst] crate::sealed::SampleValue + Copy + Ord + core::fmt::Debug + 'static
+    {
         /// Smallest value.
         const MIN: Self;
         /// Largest value.
