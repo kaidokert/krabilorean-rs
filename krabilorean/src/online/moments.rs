@@ -201,9 +201,18 @@ impl<O: OverflowPolicy, S: MomentWord> RunningMoments<O, S> {
 }
 
 impl<S: MomentWord> RawMomentsSnapshot<S> {
-    /// Returns the cumulative mean as an exact ratio.
-    pub fn mean(self) -> <S as MomentWord>::Mean {
-        <<S as MomentWord>::Sum as SumOps<_, _>>::mean(self.sum, self.samples)
+    /// Returns the cumulative mean as an exact ratio when raw moments are complete.
+    ///
+    /// Saturated or approximate raw moments return `None` because the exact mean cannot be
+    /// recovered once counters or sums have saturated.
+    pub fn mean(self) -> Option<<S as MomentWord>::Mean> {
+        if self.quality != Quality::Complete {
+            return None;
+        }
+        Some(<<S as MomentWord>::Sum as SumOps<_, _>>::mean(
+            self.sum,
+            self.samples,
+        ))
     }
 
     /// Returns exact cumulative population variance when raw moments are complete and
@@ -212,15 +221,14 @@ impl<S: MomentWord> RawMomentsSnapshot<S> {
     /// The numerator is `N * sum(x^2) - sum(x)^2`, which fits `u128` at every width for
     /// any state the family produces; the denominator is `N^2`, which fits `u64`. An
     /// inconsistent hand-built snapshot whose terms don't fit returns `None`.
-    /// Saturated raw moments return `None` because the exact variance cannot be recovered from
-    /// saturated sums.
+    /// Saturated or approximate raw moments return `None` because the exact variance cannot be
+    /// recovered from non-exact sums.
     #[allow(clippy::question_mark)]
     pub fn population_variance(self) -> Option<UnsignedWideRatio> {
-        if self.quality.is_saturated() {
+        if self.quality != Quality::Complete {
             return None;
         }
-        let samples = self.samples.get() as u128;
-        let scaled_squares = match SquareSumOps::scaled(self.sum_of_squares, samples) {
+        let scaled_squares = match SquareSumOps::scaled(self.sum_of_squares, self.samples) {
             Some(value) => value,
             None => return None,
         };
@@ -284,7 +292,10 @@ mod tests {
                 u128::try_from(squares).expect("non-negative")
             );
             assert_eq!(snapshot.quality, Quality::Complete);
-            assert_eq!(mean_parts(snapshot.mean()), (sum, n as u64));
+            assert_eq!(
+                mean_parts(snapshot.mean().expect("complete moments")),
+                (sum, n as u64)
+            );
             let variance = snapshot.population_variance().expect("complete moments");
             assert_eq!(variance.denominator.get(), (n * n) as u64);
             assert_eq!(
@@ -361,6 +372,7 @@ mod tests {
         let snapshot = moments.snapshot().expect("defined");
         assert_eq!(snapshot.sum, i64::MAX);
         assert_eq!(snapshot.quality, Quality::Saturated);
+        assert_eq!(snapshot.mean(), None);
         assert_eq!(snapshot.population_variance(), None);
     }
 
@@ -407,10 +419,10 @@ mod tests {
         let mut right = RunningMoments::<Saturating, i16>::new();
         right.update(1).expect("representable");
         left.merge(&right).expect("saturating merge succeeds");
-        assert_eq!(
-            left.snapshot().expect("defined").quality,
-            Quality::Saturated
-        );
+        let snapshot = left.snapshot().expect("defined");
+        assert_eq!(snapshot.quality, Quality::Saturated);
+        assert_eq!(snapshot.mean(), None);
+        assert_eq!(snapshot.population_variance(), None);
     }
 
     /// Every checked failure leaves the whole state unchanged, and saturation is visible, at
@@ -469,6 +481,7 @@ mod tests {
                 let snapshot = saturating.snapshot().expect("defined");
                 assert_eq!(snapshot.sum_of_squares, <$square_sum>::MAX);
                 assert_eq!(snapshot.quality, Quality::Saturated);
+                assert_eq!(snapshot.mean(), None);
                 assert_eq!(snapshot.population_variance(), None);
             }
         )*};
@@ -539,6 +552,7 @@ mod tests {
                 let snapshot = saturating.snapshot().expect("defined");
                 assert_eq!(snapshot.sum, u64::MAX);
                 assert_eq!(snapshot.quality, Quality::Saturated);
+                assert_eq!(snapshot.mean(), None);
                 assert_eq!(snapshot.population_variance(), None);
             }
         )*};
@@ -616,6 +630,15 @@ mod tests {
 
     #[test]
     fn inconsistent_snapshots_return_none() {
+        let approximate = RawMomentsSnapshot::<i16> {
+            samples: NonZeroU32::new(2).expect("nonzero"),
+            sum: 4,
+            sum_of_squares: 10,
+            quality: Quality::Approximate,
+        };
+        assert_eq!(approximate.mean(), None);
+        assert_eq!(approximate.population_variance(), None);
+
         let scaled_overflow = RawMomentsSnapshot::<i32> {
             samples: NonZeroU32::new(2).expect("nonzero"),
             sum: 0,

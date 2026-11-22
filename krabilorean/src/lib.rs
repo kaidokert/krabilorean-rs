@@ -95,7 +95,7 @@ mod sealed {
         /// `samples * self`, or `None` when it doesn't fit `u128`. A `u64` square sum times a
         /// `u32` count is below `2^96`, so it always fits; a `u128` one is checked, because a
         /// hand-built snapshot can hold any value.
-        fn scaled(self, samples: u128) -> Option<u128>;
+        fn scaled(self, samples: core::num::NonZeroU32) -> Option<u128>;
     }
 }
 

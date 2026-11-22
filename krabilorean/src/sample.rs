@@ -236,16 +236,16 @@ sum_ops!(i64 => SignedRatio: u64, u128; u64 => UnsignedRatio: u64, u128);
 
 impl crate::sealed::SquareSumOps for u64 {
     #[inline(always)]
-    fn scaled(self, samples: u128) -> Option<u128> {
+    fn scaled(self, samples: NonZeroU32) -> Option<u128> {
         // Below `2^96`, so the product is exact.
-        Some(samples * self as u128)
+        Some(u128::from(samples.get()) * u128::from(self))
     }
 }
 
 impl crate::sealed::SquareSumOps for u128 {
     #[inline(always)]
-    fn scaled(self, samples: u128) -> Option<u128> {
-        samples.checked_mul(self)
+    fn scaled(self, samples: NonZeroU32) -> Option<u128> {
+        u128::from(samples.get()).checked_mul(self)
     }
 }
 
