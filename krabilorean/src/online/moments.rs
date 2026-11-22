@@ -252,12 +252,14 @@ c0nst::c0nst! {
                 Some(value) => value,
                 None => return None,
             };
-            let samples_u64 = match NonZeroU64::new(self.samples.get() as u64) {
-                Some(samples) => samples,
+            // `samples <= u32::MAX`, so `samples^2 < 2^64` is exact in `u64` and non-zero.
+            // Squaring in `u64` before `NonZeroU64::new` preserves the 32-bit upper bound so
+            // the multiplication needs no 64-bit overflow check.
+            let samples = self.samples.get() as u64;
+            let denominator = match NonZeroU64::new(samples * samples) {
+                Some(denominator) => denominator,
                 None => NonZeroU64::MIN,
             };
-            // `samples <= u32::MAX`, so `samples^2 < 2^64` and the product never saturates.
-            let denominator = samples_u64.saturating_mul(samples_u64);
             Some(UnsignedWideRatio {
                 numerator,
                 denominator,
