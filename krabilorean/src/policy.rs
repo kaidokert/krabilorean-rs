@@ -35,7 +35,37 @@ pub trait OverflowPolicy: crate::sealed::OverflowPolicy + Copy {
     fn add_u32(left: u32, right: u32) -> Result<Arithmetic<u32>, Error>;
     /// Adds two `u64` accumulator values.
     fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error>;
+    /// Adds two `i64` accumulator values.
+    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error>;
+    /// Adds two `u128` accumulator values.
+    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error>;
 }
+
+/// An integer accumulator whose addition an [`OverflowPolicy`] controls: `u32`, `u64`, `i64`,
+/// and `u128`.
+///
+/// A family that accumulates in a type chosen by its sample word, such as
+/// [`MomentWord::Sum`](crate::sample::MomentWord::Sum), adds through this trait without
+/// specializing per accumulator width. The trait is sealed.
+pub trait Accumulator: crate::sealed::Accumulator + Copy {
+    /// Adds two values under the overflow policy `O`.
+    fn add<O: OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error>;
+}
+
+macro_rules! accumulator {
+    ($($type:ty => $add:ident),* $(,)?) => {$(
+        impl crate::sealed::Accumulator for $type {}
+
+        impl Accumulator for $type {
+            #[inline(always)]
+            fn add<O: OverflowPolicy>(left: Self, right: Self) -> Result<Arithmetic<Self>, Error> {
+                O::$add(left, right)
+            }
+        }
+    )*};
+}
+
+accumulator!(u32 => add_u32, u64 => add_u64, i64 => add_i64, u128 => add_u128);
 
 /// Reject arithmetic overflow and preserve the previous state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -54,6 +84,20 @@ impl OverflowPolicy for Checked {
     }
 
     fn add_u64(left: u64, right: u64) -> Result<Arithmetic<u64>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Err(Error::Overflow),
+        }
+    }
+
+    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Err(Error::Overflow),
+        }
+    }
+
+    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
         match left.checked_add(right) {
             Some(value) => Ok(Arithmetic::complete(value)),
             None => Err(Error::Overflow),
@@ -83,11 +127,25 @@ impl OverflowPolicy for Saturating {
             None => Ok(Arithmetic::saturated(left.saturating_add(right))),
         }
     }
+
+    fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        }
+    }
+
+    fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
+        match left.checked_add(right) {
+            Some(value) => Ok(Arithmetic::complete(value)),
+            None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Arithmetic, Checked, OverflowPolicy, Saturating};
+    use super::{Accumulator, Arithmetic, Checked, OverflowPolicy, Saturating};
     use crate::Error;
 
     #[test]
@@ -96,7 +154,7 @@ mod tests {
         const { assert!(<Saturating as OverflowPolicy>::SATURATING) };
 
         assert_eq!(
-            Checked::add_u32(10, 20),
+            <u32 as Accumulator>::add::<Checked>(10, 20),
             Ok(Arithmetic {
                 value: 30,
                 saturated: false,
@@ -104,7 +162,7 @@ mod tests {
         );
         assert_eq!(Checked::add_u32(u32::MAX, 1), Err(Error::Overflow));
         assert_eq!(
-            Saturating::add_u32(10, 20),
+            <u32 as Accumulator>::add::<Saturating>(10, 20),
             Ok(Arithmetic {
                 value: 30,
                 saturated: false,
@@ -119,7 +177,7 @@ mod tests {
         );
 
         assert_eq!(
-            Checked::add_u64(10, 20),
+            <u64 as Accumulator>::add::<Checked>(10, 20),
             Ok(Arithmetic {
                 value: 30,
                 saturated: false,
@@ -127,7 +185,7 @@ mod tests {
         );
         assert_eq!(Checked::add_u64(u64::MAX, 1), Err(Error::Overflow));
         assert_eq!(
-            Saturating::add_u64(10, 20),
+            <u64 as Accumulator>::add::<Saturating>(10, 20),
             Ok(Arithmetic {
                 value: 30,
                 saturated: false,
@@ -137,6 +195,60 @@ mod tests {
             Saturating::add_u64(u64::MAX, 1),
             Ok(Arithmetic {
                 value: u64::MAX,
+                saturated: true,
+            })
+        );
+
+        assert_eq!(
+            <i64 as Accumulator>::add::<Checked>(-10, 20),
+            Ok(Arithmetic {
+                value: 10,
+                saturated: false,
+            })
+        );
+        assert_eq!(Checked::add_i64(i64::MAX, 1), Err(Error::Overflow));
+        assert_eq!(Checked::add_i64(i64::MIN, -1), Err(Error::Overflow));
+        assert_eq!(
+            <i64 as Accumulator>::add::<Saturating>(-10, 20),
+            Ok(Arithmetic {
+                value: 10,
+                saturated: false,
+            })
+        );
+        assert_eq!(
+            Saturating::add_i64(i64::MAX, 1),
+            Ok(Arithmetic {
+                value: i64::MAX,
+                saturated: true,
+            })
+        );
+        assert_eq!(
+            Saturating::add_i64(i64::MIN, -1),
+            Ok(Arithmetic {
+                value: i64::MIN,
+                saturated: true,
+            })
+        );
+
+        assert_eq!(
+            <u128 as Accumulator>::add::<Checked>(10, 20),
+            Ok(Arithmetic {
+                value: 30,
+                saturated: false,
+            })
+        );
+        assert_eq!(Checked::add_u128(u128::MAX, 1), Err(Error::Overflow));
+        assert_eq!(
+            <u128 as Accumulator>::add::<Saturating>(10, 20),
+            Ok(Arithmetic {
+                value: 30,
+                saturated: false,
+            })
+        );
+        assert_eq!(
+            Saturating::add_u128(u128::MAX, 1),
+            Ok(Arithmetic {
+                value: u128::MAX,
                 saturated: true,
             })
         );
