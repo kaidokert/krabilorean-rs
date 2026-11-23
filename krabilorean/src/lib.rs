@@ -23,6 +23,7 @@
 pub mod arithmetic;
 pub mod error;
 pub mod float;
+pub mod histogram;
 pub mod online;
 pub mod policy;
 pub mod quality;
@@ -77,6 +78,19 @@ mod sealed {
 
         /// Seal of the public `MomentWord`.
         pub c0nst trait MomentWord: [c0nst] SampleWord {}
+
+        /// Crate-internal kernels on a histogram word. They have preconditions the type system does
+        /// not carry (`self >= lower` for `offset_from`, `lower <= upper` for `span_values`).
+        /// Sealing stops other crates implementing them, and the [`Internal`] argument stops safe
+        /// code in other crates calling them.
+        pub c0nst trait HistogramWord: [c0nst] SampleWord {
+            /// `self - lower` for `self >= lower`, exact in `u64`. Callers must hold
+            /// `self >= lower`.
+            fn offset_from(self, lower: Self, internal: Internal) -> u64;
+            /// Number of distinct words in `lower..=upper`, in `1..=2^BITS`. Callers must hold
+            /// `lower <= upper`.
+            fn span_values(lower: Self, upper: Self, internal: Internal) -> core::num::NonZeroU64;
+        }
 
         /// Exact operations on a moment sum type (`i64` for signed words, `u64` for unsigned ones)
         /// that the moment families need, given the word's square-sum type `SquareSum` and its mean
