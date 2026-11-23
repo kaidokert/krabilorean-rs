@@ -113,7 +113,7 @@ impl Quantile {
         })
     }
 
-    /// Returns the zero-based nearest-rank position `floor(q * (samples - 1))`.
+    /// Returns the zero-based order-statistic rank `floor(q * (samples - 1))`.
     ///
     /// Infallible because the denominator is non-zero, the product of two `u32` values fits `u64`,
     /// and `q <= 1` keeps the rank at most `samples - 1`.
@@ -137,7 +137,7 @@ impl Quantile {
 /// Value bounds containing one requested quantile rank, in `S` sample units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QuantileBounds<S> {
-    /// Zero-based nearest-rank position, `floor(q * (samples - 1))`.
+    /// Zero-based order-statistic rank, `floor(q * (samples - 1))`.
     pub rank: u32,
     /// Inclusive value bounds containing that rank.
     pub values: ValueBounds<S>,
@@ -184,7 +184,10 @@ c0nst::c0nst! {
     pub c0nst trait BucketView<S> {
         /// Number of stable bucket positions exposed by [`Self::bucket`].
         fn bucket_slots(&self) -> usize;
-        /// Returns one bucket, or `None` for a structurally absent edge bucket.
+        /// Returns the bucket at `index`, or `None` when that slot holds no representable values
+        /// (such as an empty interior linear bin or an edge slot outside the word's domain) or
+        /// when `index >= self.bucket_slots()`. Callers must scan all indices in
+        /// `0..self.bucket_slots()` because `None` can appear between populated slots.
         fn bucket(&self, index: usize) -> Option<Bucket<S>>;
         /// Total accepted samples represented by the distribution.
         fn samples(&self) -> u32;
@@ -261,13 +264,14 @@ c0nst::c0nst! {
             Ok(mode)
         }
 
-        /// Returns inclusive value bounds containing the requested nearest-rank quantile.
+        /// Returns inclusive value bounds containing the order-statistic rank
+        /// `floor(q * (samples - 1))`.
         #[allow(clippy::question_mark)]
         fn quantile_bounds(&self, quantile: Quantile) -> Result<Option<QuantileBounds<S>>, Error> {
-            let Some(samples) = NonZeroU32::new(self.samples()) else {
-                return Ok(None);
+            let rank = match NonZeroU32::new(self.samples()) {
+                Some(samples) => Some(quantile.rank(samples)),
+                None => None,
             };
-            let rank = quantile.rank(samples);
             let slots = self.bucket_slots();
             let mut cumulative = 0_u64;
             let mut result = None;
@@ -275,7 +279,10 @@ c0nst::c0nst! {
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
                     cumulative = cumulative.saturating_add(bucket.count as u64);
-                    if result.is_none() && cumulative > rank as u64 {
+                    if let Some(rank) = rank
+                        && result.is_none()
+                        && cumulative > rank as u64
+                    {
                         result = Some(QuantileBounds {
                             rank,
                             values: bucket.values,
@@ -284,9 +291,10 @@ c0nst::c0nst! {
                 }
                 index += 1;
             }
-            // When `cumulative == samples.get() as u64`, `cumulative > rank as u64` became true on
-            // the bucket covering `rank`, so `result` is `Some`.
-            if let Err(error) = validate_total(cumulative, samples.get()) {
+            // When `cumulative == self.samples() as u64`: if `self.samples() == 0`, `result` is
+            // `None`; if `self.samples() > 0`, `cumulative > rank as u64` became true on the
+            // bucket covering `rank`, so `result` is `Some`.
+            if let Err(error) = validate_total(cumulative, self.samples()) {
                 return Err(error);
             }
             Ok(result)
@@ -296,9 +304,13 @@ c0nst::c0nst! {
         ///
         /// A bucket wholly on one side contributes to both bounds. A bucket straddling the
         /// threshold contributes only to the maximum because its within-bucket ordering is not
-        /// retained.
+        /// retained. Returns [`Error::Overflow`] when [`BucketView::quality`] is saturated,
+        /// because saturated counters cannot establish a `u32` upper bound on the accepted count.
         #[allow(clippy::question_mark)]
         fn tail_bounds(&self, threshold: S) -> Result<TailBounds, Error> {
+            if self.quality().is_saturated() {
+                return Err(Error::Overflow);
+            }
             let slots = self.bucket_slots();
             let mut below_min = 0_u64;
             let mut below_max = 0_u64;
@@ -556,6 +568,21 @@ mod tests {
             Err(Error::ViewContractViolation)
         );
         assert_eq!(mismatched.tail_bounds(3), Err(Error::ViewContractViolation));
+
+        let zero_samples_with_nonzero_bucket = DummyView {
+            samples: 0,
+            ..populated
+        };
+        assert_eq!(
+            zero_samples_with_nonzero_bucket.quantile_bounds(Quantile::new(1, 2).expect("valid")),
+            Err(Error::ViewContractViolation)
+        );
+
+        let saturated_view = DummyView {
+            quality: Quality::Saturated,
+            ..populated
+        };
+        assert_eq!(saturated_view.tail_bounds(3), Err(Error::Overflow));
     }
 
     #[cfg(feature = "nightly")]

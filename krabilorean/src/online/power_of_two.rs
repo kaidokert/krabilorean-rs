@@ -400,9 +400,10 @@ mod tests {
             .quantile_bounds(Quantile::new(1, 2).expect("valid"))
             .expect("valid")
             .expect("non-empty");
+        assert_eq!(median.rank, 2);
         let mut sorted = stream;
         sorted.sort_unstable();
-        let expected_sample = sorted[median.rank as usize];
+        let expected_sample = sorted[2];
         assert!(
             expected_sample >= median.values.lower() && expected_sample <= median.values.upper()
         );
