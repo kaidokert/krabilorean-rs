@@ -40,10 +40,12 @@ c0nst::c0nst! {
         fn add_i64(left: i64, right: i64) -> Result<Arithmetic<i64>, Error>;
         /// Adds two `u128` accumulator values.
         fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error>;
+        /// Adds two `i128` accumulator values.
+        fn add_i128(left: i128, right: i128) -> Result<Arithmetic<i128>, Error>;
     }
 
     /// An integer accumulator whose addition an [`OverflowPolicy`] controls: `u32`, `u64`, `i64`,
-    /// and `u128`.
+    /// `u128`, and `i128`.
     ///
     /// A family that accumulates in a type chosen by its sample word, such as
     /// [`MomentWord::Sum`](crate::sample::MomentWord::Sum), adds through this trait without
@@ -69,7 +71,13 @@ macro_rules! accumulator {
     )*};
 }
 
-accumulator!(u32 => add_u32, u64 => add_u64, i64 => add_i64, u128 => add_u128);
+accumulator!(
+    u32 => add_u32,
+    u64 => add_u64,
+    i64 => add_i64,
+    u128 => add_u128,
+    i128 => add_i128,
+);
 
 /// Reject arithmetic overflow and preserve the previous state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -103,6 +111,13 @@ c0nst::c0nst! {
         }
 
         fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Err(Error::Overflow),
+            }
+        }
+
+        fn add_i128(left: i128, right: i128) -> Result<Arithmetic<i128>, Error> {
             match left.checked_add(right) {
                 Some(value) => Ok(Arithmetic::complete(value)),
                 None => Err(Error::Overflow),
@@ -143,6 +158,13 @@ c0nst::c0nst! {
         }
 
         fn add_u128(left: u128, right: u128) -> Result<Arithmetic<u128>, Error> {
+            match left.checked_add(right) {
+                Some(value) => Ok(Arithmetic::complete(value)),
+                None => Ok(Arithmetic::saturated(left.saturating_add(right))),
+            }
+        }
+
+        fn add_i128(left: i128, right: i128) -> Result<Arithmetic<i128>, Error> {
             match left.checked_add(right) {
                 Some(value) => Ok(Arithmetic::complete(value)),
                 None => Ok(Arithmetic::saturated(left.saturating_add(right))),
@@ -257,6 +279,37 @@ mod tests {
             Saturating::add_u128(u128::MAX, 1),
             Ok(Arithmetic {
                 value: u128::MAX,
+                saturated: true,
+            })
+        );
+
+        assert_eq!(
+            <i128 as Accumulator>::add::<Checked>(-10, 20),
+            Ok(Arithmetic {
+                value: 10,
+                saturated: false,
+            })
+        );
+        assert_eq!(Checked::add_i128(i128::MAX, 1), Err(Error::Overflow));
+        assert_eq!(Checked::add_i128(i128::MIN, -1), Err(Error::Overflow));
+        assert_eq!(
+            <i128 as Accumulator>::add::<Saturating>(-10, 20),
+            Ok(Arithmetic {
+                value: 10,
+                saturated: false,
+            })
+        );
+        assert_eq!(
+            Saturating::add_i128(i128::MAX, 1),
+            Ok(Arithmetic {
+                value: i128::MAX,
+                saturated: true,
+            })
+        );
+        assert_eq!(
+            Saturating::add_i128(i128::MIN, -1),
+            Ok(Arithmetic {
+                value: i128::MIN,
                 saturated: true,
             })
         );
