@@ -2,15 +2,20 @@
 
 use core::marker::PhantomData;
 
+use crate::distribution::{Bucket, BucketView, ExactBucketView};
 use crate::histogram::{
     HistogramBounds, HistogramClass, HistogramMode, bins_are_valid, classify, linear_bin_bounds,
-    lowest_mode,
+    linear_bucket, lowest_mode,
 };
 use crate::policy::OverflowPolicy;
 use crate::sample::HistogramWord;
 use crate::{Error, Quality};
 
 /// Borrowed fixed linear histogram state with compile-time bin capacity `BINS`.
+///
+/// Every word implements [`BucketView`] in its own word: slot `0` is the below-range bucket,
+/// slots `1..=BINS` are the in-range bins ([`HistogramSnapshot::bin_bounds`]), and slot
+/// `BINS + 1` is the above-range bucket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HistogramSnapshot<'a, const BINS: usize, S> {
     /// Inclusive configured bounds.
@@ -41,6 +46,36 @@ c0nst::c0nst! {
         {
             linear_bin_bounds::<BINS, S>(self.bounds, bin)
         }
+    }
+
+    c0nst impl<const BINS: usize, S: [c0nst] HistogramWord> BucketView<S>
+        for HistogramSnapshot<'_, BINS, S>
+    {
+        fn bucket_slots(&self) -> usize {
+            BINS + 2
+        }
+
+        fn bucket(&self, index: usize) -> Option<Bucket<S>> {
+            linear_bucket::<BINS, S>(self.bounds, self.counts, self.below, self.above, index)
+        }
+
+        fn samples(&self) -> u32 {
+            self.samples
+        }
+
+        fn quality(&self) -> Quality {
+            self.quality
+        }
+    }
+
+    c0nst impl<const BINS: usize, S: [c0nst] HistogramWord> crate::sealed::ExactBucketView
+        for HistogramSnapshot<'_, BINS, S>
+    {
+    }
+
+    c0nst impl<const BINS: usize, S: [c0nst] HistogramWord> ExactBucketView<S>
+        for HistogramSnapshot<'_, BINS, S>
+    {
     }
 }
 
@@ -87,18 +122,19 @@ pub(crate) struct HistogramMergeDelta<const BINS: usize> {
 impl<const BINS: usize, O, S: HistogramWord> LinearHistogram<BINS, O, S> {
     /// Creates an empty fixed histogram.
     pub const fn new(bounds: HistogramBounds<S>) -> Result<Self, Error> {
-        if !bins_are_valid::<BINS>() {
-            return Err(Error::InvalidConfiguration);
+        if bins_are_valid::<BINS>() {
+            Ok(Self {
+                bounds,
+                counts: [0; BINS],
+                below: 0,
+                above: 0,
+                samples: 0,
+                quality: Quality::Complete,
+                policy: PhantomData,
+            })
+        } else {
+            Err(Error::InvalidConfiguration)
         }
-        Ok(Self {
-            bounds,
-            counts: [0; BINS],
-            below: 0,
-            above: 0,
-            samples: 0,
-            quality: Quality::Complete,
-            policy: PhantomData,
-        })
     }
 
     /// Returns the configured inclusive bounds.
@@ -287,6 +323,7 @@ mod tests {
     use core::num::NonZeroU32;
 
     use super::LinearHistogram;
+    use crate::distribution::{BucketView, ExactDistributionQueries, Quantile};
     use crate::histogram::{HistogramBounds, HistogramMode};
     use crate::policy::{Checked, Saturating};
     use crate::sample::HistogramWord;
@@ -331,6 +368,21 @@ mod tests {
         assert_eq!(snapshot.below, 1);
         assert_eq!(snapshot.above, 1);
         assert_eq!(snapshot.counts.iter().sum::<u32>(), 5);
+        assert_eq!(snapshot.bucket_slots(), 6);
+        assert_eq!(snapshot.samples(), 7);
+        assert_eq!(snapshot.quality(), Quality::Complete);
+        assert_eq!(snapshot.bucket(6), None);
+        assert_eq!(snapshot.occupancy().expect("valid").occupied, 6);
+        assert_eq!(snapshot.mode().expect("valid").map(|m| m.index), Some(2));
+        let median = snapshot
+            .quantile_bounds(Quantile::new(1, 2).expect("valid"))
+            .expect("valid")
+            .expect("non-empty");
+        assert_eq!(median.rank, 3);
+        assert!(mid_low >= median.values.lower() && mid_low <= median.values.upper());
+        let tails = snapshot.tail_bounds(mid_low).expect("valid");
+        assert!(tails.at_or_below.minimum <= 4 && 4 <= tails.at_or_below.maximum);
+        assert!(tails.at_or_above.minimum <= 5 && 5 <= tails.at_or_above.maximum);
         assert_eq!(
             snapshot.mode,
             Some(HistogramMode {
@@ -393,13 +445,27 @@ mod tests {
             counts: [u32::MAX, 0, 0, 0],
             below: u32::MAX,
             above: u32::MAX,
-            samples: u32::MAX,
+            samples: 1,
             quality: Quality::Complete,
             policy: PhantomData,
         };
         histogram.update(0).expect("saturating bin update succeeds");
         assert_eq!(histogram.snapshot().counts[0], u32::MAX);
         assert_eq!(histogram.snapshot().quality, Quality::Saturated);
+
+        let mut samples_sat = LinearHistogram::<4, Saturating, i16> {
+            bounds,
+            counts: [0; 4],
+            below: 0,
+            above: 0,
+            samples: u32::MAX,
+            quality: Quality::Complete,
+            policy: PhantomData,
+        };
+        samples_sat
+            .update(0)
+            .expect("saturating samples update succeeds");
+        assert_eq!(samples_sat.snapshot().quality, Quality::Saturated);
 
         let mut below_sat = LinearHistogram::<4, Saturating, i16> {
             quality: Quality::Complete,
@@ -424,15 +490,20 @@ mod tests {
         let mut left = LinearHistogram::<4, Saturating, i16> {
             bounds,
             counts: [u32::MAX, 0, 0, 0],
-            below: u32::MAX,
-            above: u32::MAX,
-            samples: u32::MAX,
+            below: 0,
+            above: 0,
+            samples: 1,
             quality: Quality::Complete,
             policy: PhantomData,
         };
         let mut right = LinearHistogram::<4, Saturating, i16>::new(bounds).expect("valid");
         right.update(0).expect("in-range");
         left.merge(&right).expect("saturating merge succeeds");
+        assert_eq!(left.snapshot().quality, Quality::Saturated);
+        left.merge(&right)
+            .expect("already saturated merge succeeds");
+        assert_eq!(left.snapshot().quality, Quality::Saturated);
+        left.update(0).expect("already saturated update succeeds");
         assert_eq!(left.snapshot().quality, Quality::Saturated);
     }
 
