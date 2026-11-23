@@ -3,6 +3,7 @@
 use core::num::{NonZeroU32, NonZeroU64};
 
 use crate::Error;
+use crate::distribution::{Bucket, ValueBounds};
 use crate::sample::HistogramWord;
 
 /// Inclusive sample bounds `lower..=upper` with `lower <= upper` guaranteed by construction.
@@ -209,6 +210,55 @@ c0nst::c0nst! {
         };
         Some(HistogramBounds::from_ordered(lower, upper))
     }
+
+    /// Returns one complete-domain bucket from a linear histogram snapshot: the below-range
+    /// bucket `S::MIN..=lower - 1`, the in-range bins, then the above-range bucket
+    /// `upper + 1..=S::MAX`. An edge bucket is `None` when the bounds reach that end of the word.
+    pub(crate) c0nst fn linear_bucket<const BINS: usize, S: [c0nst] HistogramWord>(
+        bounds: HistogramBounds<S>,
+        counts: &[u32; BINS],
+        below: u32,
+        above: u32,
+        index: usize,
+    ) -> Option<Bucket<S>> {
+        if index == 0 {
+            if !bounds.lower.above(S::MIN) {
+                return None;
+            }
+            // `bounds.lower > S::MIN`, so `bounds.lower - 1` lies within `S::MIN..=S::MAX`.
+            let upper = match S::try_from_i64(bounds.lower.to_i64() - 1) {
+                Some(value) => value,
+                None => S::MIN,
+            };
+            return Some(Bucket {
+                values: ValueBounds::from_ordered(S::MIN, upper),
+                count: below,
+            });
+        }
+        if index == BINS + 1 {
+            if !S::MAX.above(bounds.upper) {
+                return None;
+            }
+            // `bounds.upper < S::MAX`, so `bounds.upper + 1` lies within `S::MIN..=S::MAX`.
+            let lower = match S::try_from_i64(bounds.upper.to_i64() + 1) {
+                Some(value) => value,
+                None => S::MAX,
+            };
+            return Some(Bucket {
+                values: ValueBounds::from_ordered(lower, S::MAX),
+                count: above,
+            });
+        }
+        let bin = index - 1;
+        let bin_bounds = match linear_bin_bounds::<BINS, S>(bounds, bin) {
+            Some(bin_bounds) => bin_bounds,
+            None => return None,
+        };
+        Some(Bucket {
+            values: ValueBounds::from_histogram_bounds(bin_bounds),
+            count: counts[bin],
+        })
+    }
 }
 
 #[cfg(test)]
@@ -217,9 +267,10 @@ mod tests {
 
     use super::{
         HistogramBounds, HistogramClass, HistogramMode, bin_arithmetic_bits, bins_are_valid,
-        classify, linear_bin_bounds, lowest_mode,
+        classify, linear_bin_bounds, linear_bucket, lowest_mode,
     };
     use crate::Error;
+    use crate::distribution::ValueBounds;
     use crate::sample::HistogramWord;
 
     #[test]
@@ -286,6 +337,31 @@ mod tests {
             HistogramBounds::new(11, 11).ok()
         );
         assert_eq!(linear_bin_bounds::<4, _>(narrow, 3), None);
+
+        let counts = [3_u32, 0, 5, 0];
+        assert_eq!(
+            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 0).map(|b| (b.values, b.count)),
+            Some((ValueBounds::new(i8::MIN, 9).expect("valid"), 2))
+        );
+        assert_eq!(
+            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 1).map(|b| (b.values, b.count)),
+            Some((ValueBounds::new(10, 10).expect("valid"), 3))
+        );
+        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 2), None);
+        assert_eq!(
+            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 3).map(|b| (b.values, b.count)),
+            Some((ValueBounds::new(11, 11).expect("valid"), 5))
+        );
+        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 4), None);
+        assert_eq!(
+            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 5).map(|b| (b.values, b.count)),
+            Some((ValueBounds::new(12, i8::MAX).expect("valid"), 7))
+        );
+        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 6), None);
+
+        let full = HistogramBounds::<i8>::new(i8::MIN, i8::MAX).expect("valid");
+        assert_eq!(linear_bucket::<4, i8>(full, &counts, 0, 0, 0), None);
+        assert_eq!(linear_bucket::<4, i8>(full, &counts, 0, 0, 5), None);
     }
 
     /// Every `(word_bits, bins)` pair that selects a 16- or 32-bit division holds the full-range

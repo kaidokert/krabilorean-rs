@@ -21,6 +21,7 @@
 //! ```
 
 pub mod arithmetic;
+pub mod distribution;
 pub mod error;
 pub mod float;
 pub mod histogram;
@@ -58,6 +59,9 @@ mod sealed {
 
         /// Seal of `policy::Accumulator`.
         pub c0nst trait Accumulator {}
+
+        /// Seal of the public `ExactBucketView`.
+        pub c0nst trait ExactBucketView {}
 
         /// Seal of the public `SampleValue`, with the comparisons that comparison-only families need.
         /// Families read these instead of matching on a type, so a new sample type changes no family.
