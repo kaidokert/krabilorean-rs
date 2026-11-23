@@ -11,10 +11,32 @@
 //!   [`SampleWord::Difference`].
 //! - [`MomentWord`] adds the raw-moment sum and square-sum types, signed or unsigned with the
 //!   word, each proven for `u32::MAX` samples.
+//! - [`HistogramWord`] adds the histogram kernels: the canonical power-of-two partition and the
+//!   linear-bin offset and span.
 //!
 //! All traits are sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
 //! `u32` implement every trait, and [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`
 //! implement [`SampleValue`].
+//!
+//! The offset and span kernels behind [`LinearHistogram`](crate::online::LinearHistogram) are
+//! crate-private because they are exact only under a precondition (`lower <= upper`) that a caller
+//! outside the crate could violate. Neither the sealed supertrait that holds them nor its call
+//! token is reachable from safe code in another crate:
+//!
+//! ```compile_fail,E0603
+//! use krabilorean::sample::HistogramWord;
+//! // Wraps silently for `a < b` if callable; it must not compile outside the crate.
+//! fn offset<S: HistogramWord>(a: S, b: S) -> u64 {
+//!     a.offset_from(b, krabilorean::sealed::Internal::new())
+//! }
+//! ```
+//!
+//! ```compile_fail,E0061
+//! use krabilorean::sample::HistogramWord;
+//! fn offset<S: HistogramWord>(a: S, b: S) -> u64 {
+//!     a.offset_from(b)
+//! }
+//! ```
 //!
 //! Accumulator widths are formulas of the word's `BITS`, each checked against its type at compile
 //! time for every word:
@@ -48,7 +70,7 @@
 //! }
 //! ```
 
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroU64};
 
 use crate::arithmetic::{SignedRatio, UnsignedRatio};
 use crate::policy::Accumulator;
@@ -146,6 +168,30 @@ c0nst::c0nst! {
 
         /// Exact widening of one word into [`Self::Sum`].
         fn to_sum(self) -> Self::Sum;
+    }
+
+    /// A sample word with the kernels the histograms need.
+    ///
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`,
+    /// `u16`, `u32` implement it. Its crate-private supertrait holds the linear-histogram offset
+    /// and span kernels, which only the crate can call.
+    pub c0nst trait HistogramWord: [c0nst] SampleWord + [c0nst] crate::sealed::HistogramWord {
+        /// Number of canonical cells in the word's full-resolution power-of-two partition, a power
+        /// of two so that coarsening is a shift.
+        ///
+        /// - Signed words, `2 * BITS` cells: `BITS` negative magnitude octaves (the widest holds
+        ///   only `MIN`), zero, and `BITS - 1` positive octaves.
+        /// - Unsigned words, `BITS` cells: `[0, 1]`, then the octaves `[2^k, 2^(k + 1) - 1]` for
+        ///   `k` in `1..BITS`. Zero shares the lowest cell with one because a separate zero cell
+        ///   would give `BITS + 1` cells and require a division to coarsen instead of a shift.
+        const POWER_OF_TWO_CELLS: usize;
+
+        /// Canonical full-resolution power-of-two cell of `self`, in increasing value order.
+        /// Signed: negative octaves at `0..BITS`, zero at `BITS`, positive octaves above it.
+        /// Unsigned: `floor(log2(max(self, 1)))`.
+        fn power_of_two_cell(self) -> usize;
+        /// Inclusive bounds of a canonical power-of-two cell, or `None` past the last cell.
+        fn power_of_two_cell_bounds(cell: usize) -> Option<crate::histogram::HistogramBounds<Self>>;
     }
 }
 
@@ -349,6 +395,157 @@ macro_rules! sample_word {
     };
 }
 
+/// `2 * BITS` canonical power-of-two cells: `BITS` negative octaves, zero, `BITS - 1` positive.
+const fn power_of_two_cells(bits: u32) -> usize {
+    2 * bits as usize
+}
+
+/// `BITS` canonical power-of-two cells of an unsigned word: `[0, 1]` and `BITS - 1` octaves.
+const fn unsigned_power_of_two_cells(bits: u32) -> usize {
+    bits as usize
+}
+
+macro_rules! signed_histogram_word {
+    ($word:ty, $difference:ty) => {
+        const _: () = assert!(power_of_two_cells(<$word>::BITS).is_power_of_two());
+
+        c0nst::c0nst! {
+            c0nst impl crate::sealed::HistogramWord for $word {
+                #[inline(always)]
+                fn offset_from(self, lower: Self, _: crate::sealed::Internal) -> u64 {
+                    // Both operands fit `$difference`, and so does their difference, which is
+                    // non-negative under the caller's `self >= lower`.
+                    ((self as $difference) - (lower as $difference)) as u64
+                }
+
+                #[inline(always)]
+                fn span_values(
+                    lower: Self,
+                    upper: Self,
+                    _: crate::sealed::Internal,
+                ) -> NonZeroU64 {
+                    // `lower <= upper`, so the span is in `1..=2^BITS` and `NonZeroU64::MIN` is
+                    // unreachable.
+                    let raw = ((upper as $difference) - (lower as $difference) + 1) as u64;
+                    match NonZeroU64::new(raw) {
+                        Some(span) => span,
+                        None => NonZeroU64::MIN,
+                    }
+                }
+            }
+
+            c0nst impl HistogramWord for $word {
+                const POWER_OF_TWO_CELLS: usize = power_of_two_cells(<$word>::BITS);
+
+                #[inline(always)]
+                fn power_of_two_cell(self) -> usize {
+                    const BITS: u32 = <$word>::BITS;
+                    if self == 0 {
+                        return BITS as usize;
+                    }
+                    let magnitude = (self as $difference).unsigned_abs();
+                    let exponent = (<$difference>::BITS - 1) - magnitude.leading_zeros();
+                    if self < 0 {
+                        (BITS - 1 - exponent) as usize
+                    } else {
+                        (BITS + 1 + exponent) as usize
+                    }
+                }
+
+                fn power_of_two_cell_bounds(
+                    cell: usize,
+                ) -> Option<crate::histogram::HistogramBounds<Self>> {
+                    const BITS: u32 = <$word>::BITS;
+                    if cell < BITS as usize {
+                        let exponent = BITS - 1 - (cell as u32);
+                        let minimum: $difference = 1 << exponent;
+                        let maximum: $difference = if exponent == BITS - 1 {
+                            1 << exponent
+                        } else {
+                            (1 << (exponent + 1)) - 1
+                        };
+                        return Some(crate::histogram::HistogramBounds::from_ordered(
+                            (-maximum) as Self,
+                            (-minimum) as Self,
+                        ));
+                    }
+                    if cell == BITS as usize {
+                        return Some(crate::histogram::HistogramBounds::from_ordered(0, 0));
+                    }
+                    if cell < (2 * BITS) as usize {
+                        let exponent = (cell as u32) - BITS - 1;
+                        let lower: $difference = 1 << exponent;
+                        let upper: $difference = (1 << (exponent + 1)) - 1;
+                        return Some(crate::histogram::HistogramBounds::from_ordered(
+                            lower as Self,
+                            upper as Self,
+                        ));
+                    }
+                    None
+                }
+            }
+        }
+    };
+}
+
+macro_rules! unsigned_histogram_word {
+    ($word:ty) => {
+        const _: () = assert!(unsigned_power_of_two_cells(<$word>::BITS).is_power_of_two());
+
+        c0nst::c0nst! {
+            c0nst impl crate::sealed::HistogramWord for $word {
+                #[inline(always)]
+                fn offset_from(self, lower: Self, _: crate::sealed::Internal) -> u64 {
+                    // Non-negative under the caller's `self >= lower`, and below `2^BITS`.
+                    (self as u64) - (lower as u64)
+                }
+
+                #[inline(always)]
+                fn span_values(
+                    lower: Self,
+                    upper: Self,
+                    _: crate::sealed::Internal,
+                ) -> NonZeroU64 {
+                    // `lower <= upper`, so the span is in `1..=2^BITS <= 2^32` and
+                    // `NonZeroU64::MIN` is unreachable.
+                    let raw = (upper as u64) - (lower as u64) + 1;
+                    match NonZeroU64::new(raw) {
+                        Some(span) => span,
+                        None => NonZeroU64::MIN,
+                    }
+                }
+            }
+
+            c0nst impl HistogramWord for $word {
+                const POWER_OF_TWO_CELLS: usize = unsigned_power_of_two_cells(<$word>::BITS);
+
+                #[inline(always)]
+                fn power_of_two_cell(self) -> usize {
+                    // `self | 1` puts zero in the cell of one; the exponent is below `BITS`.
+                    (<$word>::BITS - 1 - (self | 1).leading_zeros()) as usize
+                }
+
+                fn power_of_two_cell_bounds(
+                    cell: usize,
+                ) -> Option<crate::histogram::HistogramBounds<Self>> {
+                    if cell == 0 {
+                        return Some(crate::histogram::HistogramBounds::from_ordered(0, 1));
+                    }
+                    if cell < <$word>::BITS as usize {
+                        let lower: u64 = 1 << cell;
+                        let upper: u64 = (1 << (cell + 1)) - 1;
+                        return Some(crate::histogram::HistogramBounds::from_ordered(
+                            lower as Self,
+                            upper as Self,
+                        ));
+                    }
+                    None
+                }
+            }
+        }
+    };
+}
+
 sample_word!(i8, i16, i64, u64, SignedRatio, sum_bits, square_sum_bits);
 sample_word!(i16, i32, i64, u64, SignedRatio, sum_bits, square_sum_bits);
 sample_word!(i32, i64, i64, u128, SignedRatio, sum_bits, square_sum_bits);
@@ -380,9 +577,16 @@ sample_word!(
     unsigned_square_sum_bits
 );
 
+signed_histogram_word!(i8, i16);
+signed_histogram_word!(i16, i32);
+signed_histogram_word!(i32, i64);
+unsigned_histogram_word!(u8);
+unsigned_histogram_word!(u16);
+unsigned_histogram_word!(u32);
+
 #[cfg(test)]
 mod tests {
-    use super::{MomentWord, SampleValue, SampleWord};
+    use super::{HistogramWord, MomentWord, SampleValue, SampleWord};
 
     trait Range {
         const LO: i128;
@@ -557,7 +761,7 @@ mod tests {
         );
     }
 
-    fn check_word_conversions_and_differences<S: SampleWord + Into<i64>>(expected_name: &str) {
+    fn check_word_conversions_and_differences<S: HistogramWord + Into<i64>>(expected_name: &str) {
         assert_eq!(S::NAME, expected_name);
         assert_eq!(S::FRACTIONAL_BITS, 0);
         let (lo, hi): (i64, i64) = (S::MIN.into(), S::MAX.into());
@@ -579,6 +783,29 @@ mod tests {
         assert_eq!(S::MIN.difference(S::MIN).into(), 0);
         assert_eq!(S::MAX.absolute_difference(S::MIN), (hi - lo) as u64);
         assert_eq!(S::MIN.absolute_difference(S::MAX), (hi - lo) as u64);
+
+        let internal = crate::sealed::Internal::new();
+        assert_eq!(S::MAX.offset_from(S::MIN, internal), (hi - lo) as u64);
+        assert_eq!(S::MIN.offset_from(S::MIN, internal), 0);
+        assert_eq!(
+            S::span_values(S::MIN, S::MAX, internal).get(),
+            1_u64 << S::BITS
+        );
+        assert_eq!(S::span_values(S::MAX, S::MAX, internal).get(), 1);
+
+        assert!(S::POWER_OF_TWO_CELLS.is_power_of_two());
+        assert_eq!(S::power_of_two_cell_bounds(S::POWER_OF_TWO_CELLS), None);
+        let mut next = lo;
+        for cell in 0..S::POWER_OF_TWO_CELLS {
+            let bounds = S::power_of_two_cell_bounds(cell).expect("cell in range");
+            let (first, last) = (bounds.lower(), bounds.upper());
+            assert_eq!(first.to_i64(), next, "cell {cell}");
+            assert!(first <= last);
+            assert_eq!(first.power_of_two_cell(), cell);
+            assert_eq!(last.power_of_two_cell(), cell);
+            next = last.to_i64() + 1;
+        }
+        assert_eq!(next, hi + 1);
     }
 
     #[test]
@@ -589,6 +816,8 @@ mod tests {
         check_word_conversions_and_differences::<u8>("u8");
         check_word_conversions_and_differences::<u16>("u16");
         check_word_conversions_and_differences::<u32>("u32");
+        assert_eq!(0_i16.power_of_two_cell(), 16);
+        assert_eq!(0_u16.power_of_two_cell(), 0);
     }
 
     #[cfg(feature = "nightly")]
@@ -598,9 +827,13 @@ mod tests {
         const NARROW: Option<i16> = <i16 as SampleWord>::try_from_i64(WIDE);
         const DIFF: i32 = <i16 as SampleWord>::difference(10, -12);
         const SUM: i64 = <i16 as MomentWord>::to_sum(-12);
+        const CELL: usize = <i16 as HistogramWord>::power_of_two_cell(-12);
+        const BOUNDS: Option<crate::histogram::HistogramBounds<i16>> =
+            <i16 as HistogramWord>::power_of_two_cell_bounds(CELL);
         assert_eq!(WIDE, -12);
         assert_eq!(NARROW, Some(-12));
         assert_eq!(DIFF, 22);
         assert_eq!(SUM, -12);
+        assert_eq!(BOUNDS, crate::histogram::HistogramBounds::new(-15, -8).ok());
     }
 }
