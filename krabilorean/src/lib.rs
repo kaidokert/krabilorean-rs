@@ -77,6 +77,9 @@ mod sealed {
         /// Seal of `policy::Accumulator`.
         pub c0nst trait Accumulator {}
 
+        /// Seal of `policy::CounterWord`.
+        pub c0nst trait CounterWord {}
+
         /// Seal of the public `ExactBucketView`.
         pub c0nst trait ExactBucketView {}
 

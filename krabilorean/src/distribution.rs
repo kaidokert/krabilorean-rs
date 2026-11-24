@@ -1,8 +1,9 @@
 //! Shared borrowed views and queries for bounded ordered distributions.
 
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroU64};
 
 use crate::histogram::HistogramBounds;
+use crate::policy::CounterWord;
 use crate::sample::SampleValue;
 use crate::{Error, Quality};
 
@@ -70,22 +71,23 @@ impl<S: Copy> From<HistogramBounds<S>> for ValueBounds<S> {
     }
 }
 
-/// One borrowed-view bucket copied out of a bounded distribution of `S` samples.
+/// One borrowed-view bucket copied out of a bounded distribution of `S` samples counted in `C`
+/// words.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Bucket<S> {
+pub struct Bucket<C, S> {
     /// Inclusive values represented by this bucket.
     pub values: ValueBounds<S>,
     /// Accepted samples represented by this bucket.
-    pub count: u32,
+    pub count: C,
 }
 
-/// Inclusive lower and upper bounds on a sample count.
+/// Inclusive lower and upper bounds on a sample count, in the distribution's counter word `C`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CountBounds {
+pub struct CountBounds<C> {
     /// Count guaranteed by the summary.
-    pub minimum: u32,
+    pub minimum: C,
     /// Largest count consistent with the summary.
-    pub maximum: u32,
+    pub maximum: C,
 }
 
 /// An exact rational quantile in the closed interval `0..=1`.
@@ -118,8 +120,20 @@ impl Quantile {
     /// Infallible because the denominator is non-zero, the product of two `u32` values fits `u64`,
     /// and `q <= 1` keeps the rank at most `samples - 1`.
     pub const fn rank(self, samples: NonZeroU32) -> u32 {
-        let scaled = self.numerator as u64 * (samples.get() - 1) as u64;
+        self.rank_less_one(samples.get() - 1)
+    }
+
+    /// [`Self::rank`] from `samples - 1`, used by `u8`, `u16`, and `u32` counter words.
+    pub(crate) const fn rank_less_one(self, samples_less_one: u32) -> u32 {
+        let scaled = self.numerator as u64 * samples_less_one as u64;
         (scaled / self.denominator().get() as u64) as u32
+    }
+
+    /// [`Self::rank`] among a `u64` sample count. Infallible because the `u32 * u64` product fits
+    /// `u128` and the quotient is at most `samples - 1`.
+    pub(crate) const fn rank_u64(self, samples: NonZeroU64) -> u64 {
+        let scaled = self.numerator as u128 * (samples.get() - 1) as u128;
+        (scaled / self.denominator().get() as u128) as u64
     }
 
     /// Returns the numerator.
@@ -136,26 +150,33 @@ impl Quantile {
 
 /// Value bounds containing one requested quantile rank, in `S` sample units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct QuantileBounds<S> {
-    /// Zero-based order-statistic rank, `floor(q * (samples - 1))`.
-    pub rank: u32,
+pub struct QuantileBounds<C, S> {
+    /// Zero-based order-statistic rank, `floor(q * (samples - 1))`, in the counter word.
+    pub rank: C,
     /// Inclusive value bounds containing that rank.
     pub values: ValueBounds<S>,
 }
 
 /// The most populated bucket, with the lowest bucket index winning ties, in `S` sample units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BucketMode<S> {
+pub struct BucketMode<C: CounterWord, S> {
     /// Stable index in the borrowed bucket view.
     pub index: usize,
     /// Inclusive values represented by the modal bucket.
     pub values: ValueBounds<S>,
     /// Non-zero count in the modal bucket.
-    pub count: NonZeroU32,
+    pub count: C::NonZero,
 }
 
 const _: () = assert!(
-    core::mem::size_of::<Option<BucketMode<i16>>>() == core::mem::size_of::<BucketMode<i16>>()
+    core::mem::size_of::<Option<BucketMode<u8, i16>>>()
+        == core::mem::size_of::<BucketMode<u8, i16>>()
+        && core::mem::size_of::<Option<BucketMode<u16, i16>>>()
+            == core::mem::size_of::<BucketMode<u16, i16>>()
+        && core::mem::size_of::<Option<BucketMode<u32, i16>>>()
+            == core::mem::size_of::<BucketMode<u32, i16>>()
+        && core::mem::size_of::<Option<BucketMode<u64, i16>>>()
+            == core::mem::size_of::<BucketMode<u64, i16>>()
 );
 
 /// Used and available bucket slots.
@@ -169,28 +190,28 @@ pub struct Occupancy {
 
 /// Conservative counts on both sides of a threshold.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TailBounds {
+pub struct TailBounds<C> {
     /// Samples less than or equal to the threshold.
-    pub at_or_below: CountBounds,
+    pub at_or_below: CountBounds<C>,
     /// Samples greater than or equal to the threshold.
-    pub at_or_above: CountBounds,
+    pub at_or_above: CountBounds<C>,
 }
 
 c0nst::c0nst! {
-    /// Borrowed, ordered buckets from a bounded distribution of `S` samples.
+    /// Borrowed, ordered buckets from a bounded distribution of `S` samples counted in `C` words.
     ///
     /// Implementations expose buckets in increasing value order. Exact distributions cover every
     /// accepted sample once; a bucket may represent a value range or a single value.
-    pub c0nst trait BucketView<S> {
+    pub c0nst trait BucketView<C, S> {
         /// Number of stable bucket positions exposed by [`Self::bucket`].
         fn bucket_slots(&self) -> usize;
         /// Returns the bucket at `index`, or `None` when that slot holds no representable values
         /// (such as an empty interior linear bin or an edge slot outside the word's domain) or
         /// when `index >= self.bucket_slots()`. Callers must scan all indices in
         /// `0..self.bucket_slots()` because `None` can appear between populated slots.
-        fn bucket(&self, index: usize) -> Option<Bucket<S>>;
+        fn bucket(&self, index: usize) -> Option<Bucket<C, S>>;
         /// Total accepted samples represented by the distribution.
-        fn samples(&self) -> u32;
+        fn samples(&self) -> C;
         /// Arithmetic and approximation quality of the distribution state.
         fn quality(&self) -> Quality;
     }
@@ -199,14 +220,15 @@ c0nst::c0nst! {
     ///
     /// Saturated arithmetic is visible in [`BucketView::quality`], and shared queries reject
     /// bucket counts that do not sum to `samples`.
-    pub c0nst trait ExactBucketView<S>:
-        [c0nst] BucketView<S> + [c0nst] crate::sealed::ExactBucketView
+    pub c0nst trait ExactBucketView<C, S>:
+        [c0nst] BucketView<C, S> + [c0nst] crate::sealed::ExactBucketView
     {
     }
 
-    /// Queries shared by exact linear, power-of-two, and categorical distributions of `S` samples.
-    pub c0nst trait ExactDistributionQueries<S: [c0nst] SampleValue>:
-        [c0nst] ExactBucketView<S>
+    /// Queries shared by exact linear, power-of-two, and categorical distributions of `S` samples
+    /// counted in `C` words.
+    pub c0nst trait ExactDistributionQueries<C: [c0nst] CounterWord, S: [c0nst] SampleValue>:
+        [c0nst] ExactBucketView<C, S>
     {
         /// Returns occupied bucket slots after validating that counts sum to `samples`.
         #[allow(clippy::question_mark)]
@@ -217,14 +239,18 @@ c0nst::c0nst! {
             let mut index = 0_usize;
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
-                    if bucket.count > 0 {
+                    let count = bucket.count.to_u64();
+                    if count > 0 {
                         occupied += 1;
                     }
-                    total = total.saturating_add(bucket.count as u64);
+                    total = match total.checked_add(count) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                 }
                 index += 1;
             }
-            if let Err(error) = validate_total(total, self.samples()) {
+            if let Err(error) = validate_total(total, self.samples().to_u64()) {
                 return Err(error);
             }
             Ok(Occupancy { occupied, slots })
@@ -232,33 +258,33 @@ c0nst::c0nst! {
 
         /// Returns the lowest-index populated bucket having the largest count.
         #[allow(clippy::question_mark)]
-        fn mode(&self) -> Result<Option<BucketMode<S>>, Error> {
+        fn mode(&self) -> Result<Option<BucketMode<C, S>>, Error> {
             let slots = self.bucket_slots();
-            let mut mode: Option<BucketMode<S>> = None;
-            let mut largest = 0_u32;
+            let mut mode: Option<BucketMode<C, S>> = None;
+            let mut largest = 0_u64;
             let mut total = 0_u64;
             let mut index = 0_usize;
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
-                    total = total.saturating_add(bucket.count as u64);
-                    if bucket.count > largest {
-                        largest = bucket.count;
-                        // `largest >= 0` and `bucket.count > largest`, so `bucket.count >= 1` and
-                        // `NonZeroU32::MIN` is unreachable.
-                        let count = match NonZeroU32::new(bucket.count) {
-                            Some(nonzero) => nonzero,
-                            None => NonZeroU32::MIN,
-                        };
-                        mode = Some(BucketMode {
-                            index,
-                            values: bucket.values,
-                            count,
-                        });
+                    let count_u64 = bucket.count.to_u64();
+                    total = match total.checked_add(count_u64) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
+                    if count_u64 > largest {
+                        if let Some(count) = bucket.count.non_zero() {
+                            largest = count_u64;
+                            mode = Some(BucketMode {
+                                index,
+                                values: bucket.values,
+                                count,
+                            });
+                        }
                     }
                 }
                 index += 1;
             }
-            if let Err(error) = validate_total(total, self.samples()) {
+            if let Err(error) = validate_total(total, self.samples().to_u64()) {
                 return Err(error);
             }
             Ok(mode)
@@ -267,9 +293,12 @@ c0nst::c0nst! {
         /// Returns inclusive value bounds containing the order-statistic rank
         /// `floor(q * (samples - 1))`.
         #[allow(clippy::question_mark)]
-        fn quantile_bounds(&self, quantile: Quantile) -> Result<Option<QuantileBounds<S>>, Error> {
-            let rank = match NonZeroU32::new(self.samples()) {
-                Some(samples) => Some(quantile.rank(samples)),
+        fn quantile_bounds(
+            &self,
+            quantile: Quantile,
+        ) -> Result<Option<QuantileBounds<C, S>>, Error> {
+            let rank = match self.samples().non_zero() {
+                Some(samples) => Some(C::rank(quantile, samples)),
                 None => None,
             };
             let slots = self.bucket_slots();
@@ -278,23 +307,25 @@ c0nst::c0nst! {
             let mut index = 0_usize;
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
-                    cumulative = cumulative.saturating_add(bucket.count as u64);
-                    if let Some(rank) = rank
-                        && result.is_none()
-                        && cumulative > rank as u64
-                    {
-                        result = Some(QuantileBounds {
-                            rank,
-                            values: bucket.values,
-                        });
+                    cumulative = match cumulative.checked_add(bucket.count.to_u64()) {
+                        Some(cumulative) => cumulative,
+                        None => return Err(Error::ViewContractViolation),
+                    };
+                    if let Some(rank) = rank {
+                        if result.is_none() && cumulative > rank.to_u64() {
+                            result = Some(QuantileBounds {
+                                rank,
+                                values: bucket.values,
+                            });
+                        }
                     }
                 }
                 index += 1;
             }
-            // When `cumulative == self.samples() as u64`: if `self.samples() == 0`, `result` is
-            // `None`; if `self.samples() > 0`, `cumulative > rank as u64` became true on the
+            // When `cumulative == self.samples().to_u64()`: if `self.samples() == 0`, `result` is
+            // `None`; if `self.samples() > 0`, `cumulative > rank.to_u64()` became true on the
             // bucket covering `rank`, so `result` is `Some`.
-            if let Err(error) = validate_total(cumulative, self.samples()) {
+            if let Err(error) = validate_total(cumulative, self.samples().to_u64()) {
                 return Err(error);
             }
             Ok(result)
@@ -305,9 +336,9 @@ c0nst::c0nst! {
         /// A bucket wholly on one side contributes to both bounds. A bucket straddling the
         /// threshold contributes only to the maximum because its within-bucket ordering is not
         /// retained. Returns [`Error::Overflow`] when [`BucketView::quality`] is saturated,
-        /// because saturated counters cannot establish a `u32` upper bound on the accepted count.
+        /// because saturated counters cannot establish a `C` upper bound on the accepted count.
         #[allow(clippy::question_mark)]
-        fn tail_bounds(&self, threshold: S) -> Result<TailBounds, Error> {
+        fn tail_bounds(&self, threshold: S) -> Result<TailBounds<C>, Error> {
             if self.quality().is_saturated() {
                 return Err(Error::Overflow);
             }
@@ -320,8 +351,11 @@ c0nst::c0nst! {
             let mut index = 0_usize;
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
-                    let count = bucket.count as u64;
-                    total = total.saturating_add(count);
+                    let count = bucket.count.to_u64();
+                    total = match total.checked_add(count) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                     if threshold.at_or_above(bucket.values.upper()) {
                         below_min = below_min.saturating_add(count);
                         below_max = below_max.saturating_add(count);
@@ -337,32 +371,45 @@ c0nst::c0nst! {
                 }
                 index += 1;
             }
-            // Each partial sum is at most `total`; once `total == self.samples() as u64`, all four
-            // bounds fit `u32`.
-            if let Err(error) = validate_total(total, self.samples()) {
+            // Each partial sum is at most `total`; once `total == self.samples().to_u64()`, all
+            // four bounds are at most `C::MAX` and fit `C`.
+            if let Err(error) = validate_total(total, self.samples().to_u64()) {
                 return Err(error);
             }
             Ok(TailBounds {
                 at_or_below: CountBounds {
-                    minimum: below_min as u32,
-                    maximum: below_max as u32,
+                    minimum: to_counter(below_min),
+                    maximum: to_counter(below_max),
                 },
                 at_or_above: CountBounds {
-                    minimum: above_min as u32,
-                    maximum: above_max as u32,
+                    minimum: to_counter(above_min),
+                    maximum: to_counter(above_max),
                 },
             })
         }
     }
 
-    c0nst impl<S: [c0nst] SampleValue, T: [c0nst] ExactBucketView<S> + ?Sized>
-        ExactDistributionQueries<S> for T
+    c0nst impl<
+        C: [c0nst] CounterWord,
+        S: [c0nst] SampleValue,
+        T: [c0nst] ExactBucketView<C, S> + ?Sized,
+    > ExactDistributionQueries<C, S> for T
     {
+    }
+
+    /// Converts a `u64` count proven to be at most `C::MAX` into `C`.
+    c0nst fn to_counter<C: [c0nst] CounterWord>(value: u64) -> C {
+        // Callers validate `value <= total == samples.to_u64() <= C::MAX.to_u64()` before
+        // converting, so `C::MAX` is unreachable.
+        match C::from_u64(value) {
+            Some(count) => count,
+            None => C::MAX,
+        }
     }
 }
 
-const fn validate_total(total: u64, samples: u32) -> Result<(), Error> {
-    if total == samples as u64 {
+const fn validate_total(total: u64, samples: u64) -> Result<(), Error> {
+    if total == samples {
         Ok(())
     } else {
         Err(Error::ViewContractViolation)
@@ -432,19 +479,19 @@ mod tests {
         );
     }
 
-    struct DummyView {
-        buckets: [Option<Bucket<i16>>; 3],
-        samples: u32,
+    struct DummyView<C = u32> {
+        buckets: [Option<Bucket<C, i16>>; 3],
+        samples: C,
         quality: Quality,
     }
 
     c0nst::c0nst! {
-        c0nst impl BucketView<i16> for DummyView {
+        c0nst impl<C: Copy> BucketView<C, i16> for DummyView<C> {
             fn bucket_slots(&self) -> usize {
                 self.buckets.len()
             }
 
-            fn bucket(&self, index: usize) -> Option<Bucket<i16>> {
+            fn bucket(&self, index: usize) -> Option<Bucket<C, i16>> {
                 if index < self.buckets.len() {
                     self.buckets[index]
                 } else {
@@ -452,7 +499,7 @@ mod tests {
                 }
             }
 
-            fn samples(&self) -> u32 {
+            fn samples(&self) -> C {
                 self.samples
             }
 
@@ -461,13 +508,13 @@ mod tests {
             }
         }
 
-        c0nst impl crate::sealed::ExactBucketView for DummyView {}
-        c0nst impl ExactBucketView<i16> for DummyView {}
+        c0nst impl<C> crate::sealed::ExactBucketView for DummyView<C> {}
+        c0nst impl<C: Copy> ExactBucketView<C, i16> for DummyView<C> {}
     }
 
     #[test]
     fn queries_handle_empty_and_populated_views_and_reject_mismatched_totals() {
-        let empty = DummyView {
+        let empty = DummyView::<u32> {
             buckets: [None, None, None],
             samples: 0,
             quality: Quality::Complete,
@@ -503,7 +550,7 @@ mod tests {
         let b0 = ValueBounds::new(-10, -1).expect("valid");
         let b1 = ValueBounds::new(0, 5).expect("valid");
         let b2 = ValueBounds::new(6, 10).expect("valid");
-        let populated = DummyView {
+        let populated = DummyView::<u32> {
             buckets: [
                 Some(Bucket {
                     values: b0,
@@ -583,6 +630,66 @@ mod tests {
             ..populated
         };
         assert_eq!(saturated_view.tail_bounds(3), Err(Error::Overflow));
+
+        let overflowing_u64 = DummyView::<u64> {
+            buckets: [
+                Some(Bucket {
+                    values: b0,
+                    count: u64::MAX,
+                }),
+                Some(Bucket {
+                    values: b1,
+                    count: 1,
+                }),
+                None,
+            ],
+            samples: u64::MAX,
+            quality: Quality::Complete,
+        };
+        let max_quantile = Quantile::new(1, 1).expect("valid");
+        assert_eq!(
+            overflowing_u64.occupancy(),
+            Err(Error::ViewContractViolation)
+        );
+        assert_eq!(overflowing_u64.mode(), Err(Error::ViewContractViolation));
+        assert_eq!(
+            overflowing_u64.quantile_bounds(max_quantile),
+            Err(Error::ViewContractViolation)
+        );
+        assert_eq!(
+            overflowing_u64.tail_bounds(0),
+            Err(Error::ViewContractViolation)
+        );
+
+        let exact_u64_max = DummyView::<u64> {
+            buckets: [
+                Some(Bucket {
+                    values: b0,
+                    count: u64::MAX - 1,
+                }),
+                Some(Bucket {
+                    values: b1,
+                    count: 1,
+                }),
+                None,
+            ],
+            samples: u64::MAX,
+            quality: Quality::Complete,
+        };
+        assert_eq!(
+            exact_u64_max.occupancy(),
+            Ok(Occupancy {
+                occupied: 2,
+                slots: 3,
+            })
+        );
+        assert_eq!(
+            exact_u64_max.quantile_bounds(max_quantile),
+            Ok(Some(QuantileBounds {
+                rank: u64::MAX - 1,
+                values: b1,
+            }))
+        );
     }
 
     #[cfg(feature = "nightly")]
@@ -614,9 +721,10 @@ mod tests {
             Err(_) => unreachable!(),
         };
         const OCC: Result<Occupancy, Error> = VIEW.occupancy();
-        const MODE: Result<Option<BucketMode<i16>>, Error> = VIEW.mode();
-        const QBOUNDS: Result<Option<QuantileBounds<i16>>, Error> = VIEW.quantile_bounds(MEDIAN);
-        const TAILS: Result<TailBounds, Error> = VIEW.tail_bounds(1);
+        const MODE: Result<Option<BucketMode<u32, i16>>, Error> = VIEW.mode();
+        const QBOUNDS: Result<Option<QuantileBounds<u32, i16>>, Error> =
+            VIEW.quantile_bounds(MEDIAN);
+        const TAILS: Result<TailBounds<u32>, Error> = VIEW.tail_bounds(1);
         assert_eq!(
             OCC,
             Ok(Occupancy {

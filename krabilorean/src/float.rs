@@ -34,7 +34,7 @@
 //!     None => panic!("limit is finite"),
 //! };
 //! let mut extrema = Extrema::<Checked, Finite<f32>>::new();
-//! let mut crossings = ThresholdCrossings::<Checked, Finite<f32>>::new(LIMIT);
+//! let mut crossings = ThresholdCrossings::<Checked, u32, Finite<f32>>::new(LIMIT);
 //! for reading in [9.7_f32, 9.9, f32::NAN, 9.6, 10.2] {
 //!     let Some(sample) = Finite::new(reading) else { continue };
 //!     extrema.update(sample)?;
@@ -461,8 +461,8 @@ mod tests {
             let mut minimum = Minimum::<Checked, Finite<f32>>::new();
             let mut maximum = Maximum::<Checked, Finite<f32>>::new();
             let mut extrema = Extrema::<Checked, Finite<f32>>::new();
-            let mut crossings = ThresholdCrossings::<Checked, Finite<f32>>::new(limit);
-            let mut runs = ThresholdRuns::<Checked, Finite<f32>>::new(limit);
+            let mut crossings = ThresholdCrossings::<Checked, u32, Finite<f32>>::new(limit);
+            let mut runs = ThresholdRuns::<Checked, u32, Finite<f32>>::new(limit);
             for &sample in &samples {
                 minimum.update(sample).expect("minimum");
                 maximum.update(sample).expect("maximum");
@@ -523,12 +523,15 @@ mod tests {
                 let mut whole = Extrema::<Checked, Finite<f64>>::new();
                 let mut first = Extrema::<Checked, Finite<f64>>::new();
                 let mut second = Extrema::<Checked, Finite<f64>>::new();
-                let mut whole_crossings = ThresholdCrossings::<Checked, Finite<f64>>::new(limit);
-                let mut first_crossings = ThresholdCrossings::<Checked, Finite<f64>>::new(limit);
-                let mut second_crossings = ThresholdCrossings::<Checked, Finite<f64>>::new(limit);
-                let mut whole_runs = ThresholdRuns::<Checked, Finite<f64>>::new(limit);
-                let mut first_runs = ThresholdRuns::<Checked, Finite<f64>>::new(limit);
-                let mut second_runs = ThresholdRuns::<Checked, Finite<f64>>::new(limit);
+                let mut whole_crossings =
+                    ThresholdCrossings::<Checked, u32, Finite<f64>>::new(limit);
+                let mut first_crossings =
+                    ThresholdCrossings::<Checked, u32, Finite<f64>>::new(limit);
+                let mut second_crossings =
+                    ThresholdCrossings::<Checked, u32, Finite<f64>>::new(limit);
+                let mut whole_runs = ThresholdRuns::<Checked, u32, Finite<f64>>::new(limit);
+                let mut first_runs = ThresholdRuns::<Checked, u32, Finite<f64>>::new(limit);
+                let mut second_runs = ThresholdRuns::<Checked, u32, Finite<f64>>::new(limit);
                 for &sample in &samples {
                     whole.update(sample).expect("update");
                     whole_crossings.update(sample).expect("update");
