@@ -1,9 +1,10 @@
 //! Shared fixed-range linear histogram semantics.
 
-use core::num::{NonZeroU32, NonZeroU64};
+use core::num::NonZeroU64;
 
 use crate::Error;
 use crate::distribution::{Bucket, ValueBounds};
+use crate::policy::CounterWord;
 use crate::sample::HistogramWord;
 
 /// Inclusive sample bounds `lower..=upper` with `lower <= upper` guaranteed by construction.
@@ -68,42 +69,50 @@ impl<S: Copy> HistogramBounds<S> {
 /// The lowest-index bin holding the most samples, with its count.
 ///
 /// A histogram has a mode exactly when it holds at least one in-range sample, so the count is
-/// never zero. `B` is the bin index (`u32` by default, since configurable histograms cap bin counts
-/// at `u32::MAX`).
+/// never zero. `C` is the histogram's counter word; `B` is the bin index (`u32` by default, since
+/// configurable histograms cap bin counts at `u32::MAX`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HistogramMode<B = u32> {
+pub struct HistogramMode<C: CounterWord, B = u32> {
     /// Lowest index among the bins with the largest count.
     pub bin: B,
     /// Samples in that bin.
-    pub count: NonZeroU32,
+    pub count: C::NonZero,
 }
 
-const _: () =
-    assert!(core::mem::size_of::<Option<HistogramMode>>() == core::mem::size_of::<HistogramMode>());
+const _: () = assert!(
+    core::mem::size_of::<Option<HistogramMode<u8>>>() == core::mem::size_of::<HistogramMode<u8>>()
+        && core::mem::size_of::<Option<HistogramMode<u16>>>()
+            == core::mem::size_of::<HistogramMode<u16>>()
+        && core::mem::size_of::<Option<HistogramMode<u32>>>()
+            == core::mem::size_of::<HistogramMode<u32>>()
+        && core::mem::size_of::<Option<HistogramMode<u64>>>()
+            == core::mem::size_of::<HistogramMode<u64>>()
+);
 
-/// The lowest-index mode of `counts`, or `None` when every count is zero.
-pub(crate) const fn lowest_mode(counts: &[u32]) -> Option<HistogramMode> {
-    let mut mode: Option<HistogramMode> = None;
-    let mut largest = 0_u32;
-    let mut index = 0_usize;
-    while index < counts.len() {
-        let count = counts[index];
-        if count > largest {
-            largest = count;
-            // `largest >= 0` and `count > largest`, so `count >= 1` and `NonZeroU32::MIN` is
-            // unreachable.
-            let nonzero = match NonZeroU32::new(count) {
-                Some(nonzero) => nonzero,
-                None => NonZeroU32::MIN,
-            };
-            mode = Some(HistogramMode {
-                bin: index as u32,
-                count: nonzero,
-            });
+c0nst::c0nst! {
+    /// The lowest-index mode of `counts`, or `None` when every count is zero.
+    pub(crate) c0nst fn lowest_mode<C: [c0nst] CounterWord>(
+        counts: &[C],
+    ) -> Option<HistogramMode<C>> {
+        let mut mode: Option<HistogramMode<C>> = None;
+        let mut largest = 0_u64;
+        let mut index = 0_usize;
+        while index < counts.len() {
+            let count = counts[index];
+            let count_u64 = count.to_u64();
+            if count_u64 > largest {
+                if let Some(nonzero) = count.non_zero() {
+                    largest = count_u64;
+                    mode = Some(HistogramMode {
+                        bin: index as u32,
+                        count: nonzero,
+                    });
+                }
+            }
+            index += 1;
         }
-        index += 1;
+        mode
     }
-    mode
 }
 
 /// Classification of one sample relative to histogram bounds.
@@ -214,13 +223,13 @@ c0nst::c0nst! {
     /// Returns one complete-domain bucket from a linear histogram snapshot: the below-range
     /// bucket `S::MIN..=lower - 1`, the in-range bins, then the above-range bucket
     /// `upper + 1..=S::MAX`. An edge bucket is `None` when the bounds reach that end of the word.
-    pub(crate) c0nst fn linear_bucket<const BINS: usize, S: [c0nst] HistogramWord>(
+    pub(crate) c0nst fn linear_bucket<const BINS: usize, C: Copy, S: [c0nst] HistogramWord>(
         bounds: HistogramBounds<S>,
-        counts: &[u32; BINS],
-        below: u32,
-        above: u32,
+        counts: &[C; BINS],
+        below: C,
+        above: C,
         index: usize,
-    ) -> Option<Bucket<S>> {
+    ) -> Option<Bucket<C, S>> {
         if index == 0 {
             if !bounds.lower.above(S::MIN) {
                 return None;
@@ -263,7 +272,7 @@ c0nst::c0nst! {
 
 #[cfg(test)]
 mod tests {
-    use core::num::{NonZeroU32, NonZeroU64};
+    use core::num::{NonZeroU8, NonZeroU32, NonZeroU64};
 
     use super::{
         HistogramBounds, HistogramClass, HistogramMode, bin_arithmetic_bits, bins_are_valid,
@@ -294,12 +303,19 @@ mod tests {
 
     #[test]
     fn lowest_mode_picks_first_highest_nonzero_bin() {
-        assert_eq!(lowest_mode(&[0, 0, 0]), None);
+        assert_eq!(lowest_mode::<u32>(&[0, 0, 0]), None);
         assert_eq!(
-            lowest_mode(&[0, 3, 5, 5, 2]),
+            lowest_mode::<u32>(&[0, 3, 5, 5, 2]),
             Some(HistogramMode {
                 bin: 2,
                 count: NonZeroU32::new(5).expect("nonzero"),
+            })
+        );
+        assert_eq!(
+            lowest_mode::<u8>(&[0, 3, 5, 5, 2]),
+            Some(HistogramMode {
+                bin: 2,
+                count: NonZeroU8::new(5).expect("nonzero"),
             })
         );
     }
@@ -340,28 +356,28 @@ mod tests {
 
         let counts = [3_u32, 0, 5, 0];
         assert_eq!(
-            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 0).map(|b| (b.values, b.count)),
+            linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 0).map(|b| (b.values, b.count)),
             Some((ValueBounds::new(i8::MIN, 9).expect("valid"), 2))
         );
         assert_eq!(
-            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 1).map(|b| (b.values, b.count)),
+            linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 1).map(|b| (b.values, b.count)),
             Some((ValueBounds::new(10, 10).expect("valid"), 3))
         );
-        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 2), None);
+        assert_eq!(linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 2), None);
         assert_eq!(
-            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 3).map(|b| (b.values, b.count)),
+            linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 3).map(|b| (b.values, b.count)),
             Some((ValueBounds::new(11, 11).expect("valid"), 5))
         );
-        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 4), None);
+        assert_eq!(linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 4), None);
         assert_eq!(
-            linear_bucket::<4, i8>(narrow, &counts, 2, 7, 5).map(|b| (b.values, b.count)),
+            linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 5).map(|b| (b.values, b.count)),
             Some((ValueBounds::new(12, i8::MAX).expect("valid"), 7))
         );
-        assert_eq!(linear_bucket::<4, i8>(narrow, &counts, 2, 7, 6), None);
+        assert_eq!(linear_bucket::<4, u32, i8>(narrow, &counts, 2, 7, 6), None);
 
         let full = HistogramBounds::<i8>::new(i8::MIN, i8::MAX).expect("valid");
-        assert_eq!(linear_bucket::<4, i8>(full, &counts, 0, 0, 0), None);
-        assert_eq!(linear_bucket::<4, i8>(full, &counts, 0, 0, 5), None);
+        assert_eq!(linear_bucket::<4, u32, i8>(full, &counts, 0, 0, 0), None);
+        assert_eq!(linear_bucket::<4, u32, i8>(full, &counts, 0, 0, 5), None);
     }
 
     /// Every `(word_bits, bins)` pair that selects a 16- or 32-bit division holds the full-range
