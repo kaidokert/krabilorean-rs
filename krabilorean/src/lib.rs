@@ -57,6 +57,23 @@ mod sealed {
     c0nst::c0nst! {
         pub c0nst trait OverflowPolicy {}
 
+        /// Seal of `arithmetic::RoundingPolicy`, with the shift-validated power-of-two division
+        /// kernels. Callers must hold `shift < 63` for `i64` and `shift < 127` for `i128`.
+        pub c0nst trait RoundingPolicy {
+            /// `round(value / 2^shift)` for `shift < 63`.
+            fn divide_power_of_two_checked_shift(
+                value: i64,
+                shift: u32,
+                internal: Internal,
+            ) -> i64;
+            /// `round(value / 2^shift)` for `shift < 127`.
+            fn divide_power_of_two_i128_checked_shift(
+                value: i128,
+                shift: u32,
+                internal: Internal,
+            ) -> i128;
+        }
+
         /// Seal of `policy::Accumulator`.
         pub c0nst trait Accumulator {}
 
