@@ -243,7 +243,10 @@ c0nst::c0nst! {
                     if count > 0 {
                         occupied += 1;
                     }
-                    total = total.saturating_add(count);
+                    total = match total.checked_add(count) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                 }
                 index += 1;
             }
@@ -264,7 +267,10 @@ c0nst::c0nst! {
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
                     let count_u64 = bucket.count.to_u64();
-                    total = total.saturating_add(count_u64);
+                    total = match total.checked_add(count_u64) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                     if count_u64 > largest {
                         if let Some(count) = bucket.count.non_zero() {
                             largest = count_u64;
@@ -301,7 +307,10 @@ c0nst::c0nst! {
             let mut index = 0_usize;
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
-                    cumulative = cumulative.saturating_add(bucket.count.to_u64());
+                    cumulative = match cumulative.checked_add(bucket.count.to_u64()) {
+                        Some(cumulative) => cumulative,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                     if let Some(rank) = rank {
                         if result.is_none() && cumulative > rank.to_u64() {
                             result = Some(QuantileBounds {
@@ -343,7 +352,10 @@ c0nst::c0nst! {
             while index < slots {
                 if let Some(bucket) = self.bucket(index) {
                     let count = bucket.count.to_u64();
-                    total = total.saturating_add(count);
+                    total = match total.checked_add(count) {
+                        Some(total) => total,
+                        None => return Err(Error::ViewContractViolation),
+                    };
                     if threshold.at_or_above(bucket.values.upper()) {
                         below_min = below_min.saturating_add(count);
                         below_max = below_max.saturating_add(count);
@@ -467,19 +479,19 @@ mod tests {
         );
     }
 
-    struct DummyView {
-        buckets: [Option<Bucket<u32, i16>>; 3],
-        samples: u32,
+    struct DummyView<C = u32> {
+        buckets: [Option<Bucket<C, i16>>; 3],
+        samples: C,
         quality: Quality,
     }
 
     c0nst::c0nst! {
-        c0nst impl BucketView<u32, i16> for DummyView {
+        c0nst impl<C: Copy> BucketView<C, i16> for DummyView<C> {
             fn bucket_slots(&self) -> usize {
                 self.buckets.len()
             }
 
-            fn bucket(&self, index: usize) -> Option<Bucket<u32, i16>> {
+            fn bucket(&self, index: usize) -> Option<Bucket<C, i16>> {
                 if index < self.buckets.len() {
                     self.buckets[index]
                 } else {
@@ -487,7 +499,7 @@ mod tests {
                 }
             }
 
-            fn samples(&self) -> u32 {
+            fn samples(&self) -> C {
                 self.samples
             }
 
@@ -496,13 +508,13 @@ mod tests {
             }
         }
 
-        c0nst impl crate::sealed::ExactBucketView for DummyView {}
-        c0nst impl ExactBucketView<u32, i16> for DummyView {}
+        c0nst impl<C> crate::sealed::ExactBucketView for DummyView<C> {}
+        c0nst impl<C: Copy> ExactBucketView<C, i16> for DummyView<C> {}
     }
 
     #[test]
     fn queries_handle_empty_and_populated_views_and_reject_mismatched_totals() {
-        let empty = DummyView {
+        let empty = DummyView::<u32> {
             buckets: [None, None, None],
             samples: 0,
             quality: Quality::Complete,
@@ -538,7 +550,7 @@ mod tests {
         let b0 = ValueBounds::new(-10, -1).expect("valid");
         let b1 = ValueBounds::new(0, 5).expect("valid");
         let b2 = ValueBounds::new(6, 10).expect("valid");
-        let populated = DummyView {
+        let populated = DummyView::<u32> {
             buckets: [
                 Some(Bucket {
                     values: b0,
@@ -618,6 +630,66 @@ mod tests {
             ..populated
         };
         assert_eq!(saturated_view.tail_bounds(3), Err(Error::Overflow));
+
+        let overflowing_u64 = DummyView::<u64> {
+            buckets: [
+                Some(Bucket {
+                    values: b0,
+                    count: u64::MAX,
+                }),
+                Some(Bucket {
+                    values: b1,
+                    count: 1,
+                }),
+                None,
+            ],
+            samples: u64::MAX,
+            quality: Quality::Complete,
+        };
+        let max_quantile = Quantile::new(1, 1).expect("valid");
+        assert_eq!(
+            overflowing_u64.occupancy(),
+            Err(Error::ViewContractViolation)
+        );
+        assert_eq!(overflowing_u64.mode(), Err(Error::ViewContractViolation));
+        assert_eq!(
+            overflowing_u64.quantile_bounds(max_quantile),
+            Err(Error::ViewContractViolation)
+        );
+        assert_eq!(
+            overflowing_u64.tail_bounds(0),
+            Err(Error::ViewContractViolation)
+        );
+
+        let exact_u64_max = DummyView::<u64> {
+            buckets: [
+                Some(Bucket {
+                    values: b0,
+                    count: u64::MAX - 1,
+                }),
+                Some(Bucket {
+                    values: b1,
+                    count: 1,
+                }),
+                None,
+            ],
+            samples: u64::MAX,
+            quality: Quality::Complete,
+        };
+        assert_eq!(
+            exact_u64_max.occupancy(),
+            Ok(Occupancy {
+                occupied: 2,
+                slots: 3,
+            })
+        );
+        assert_eq!(
+            exact_u64_max.quantile_bounds(max_quantile),
+            Ok(Some(QuantileBounds {
+                rank: u64::MAX - 1,
+                values: b1,
+            }))
+        );
     }
 
     #[cfg(feature = "nightly")]
