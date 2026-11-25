@@ -23,6 +23,7 @@
 pub mod arithmetic;
 pub mod distribution;
 pub mod error;
+pub mod fixed_point;
 pub mod float;
 pub mod histogram;
 pub mod online;

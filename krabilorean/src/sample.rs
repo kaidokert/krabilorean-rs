@@ -1,13 +1,13 @@
-//! Sample words: the integer types a statistic can consume, with their wider arithmetic types and
-//! the width-dependent limits proven for each.
+//! Sample words: the integer and fixed-point types a statistic can consume, with their wider
+//! arithmetic types and the width-dependent limits proven for each.
 //!
 //! The traits are split by what a family needs:
 //!
 //! - [`SampleValue`] holds the order and extremes (`MIN`, `MAX`, `ZERO`) that comparison-only
 //!   families need. Every [`SampleWord`] implements it, as do the NaN-free floats
 //!   [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`.
-//! - [`SampleWord`] adds the width facts every integer sample family may use: `BITS`, exact `i64`
-//!   conversions, the Q-format headroom, and the exact signed difference type
+//! - [`SampleWord`] adds the width facts every integer or fixed-point sample family may use:
+//!   `BITS`, exact `i64` conversions, the Q-format headroom, and the exact signed difference type
 //!   [`SampleWord::Difference`].
 //! - [`MomentWord`] adds the raw-moment sum and square-sum types, signed or unsigned with the
 //!   word, each proven to hold as many samples as a counter of [`MomentWord::MAX_COUNTER_BITS`]
@@ -15,9 +15,17 @@
 //! - [`HistogramWord`] adds the histogram kernels: the canonical power-of-two partition and the
 //!   linear-bin offset and span.
 //!
-//! All traits are sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-//! `u32` implement every trait, and [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`
-//! implement [`SampleValue`].
+//! All traits are sealed: the signed words `i8`, `i16`, `i32`, the unsigned words `u8`, `u16`,
+//! `u32`, and the fixed-point words [`FixedI8<Frac>`](const_fixed::FixedI8),
+//! [`FixedI16<Frac>`](const_fixed::FixedI16), [`FixedI32<Frac>`](const_fixed::FixedI32),
+//! [`FixedU8<Frac>`](const_fixed::FixedU8), [`FixedU16<Frac>`](const_fixed::FixedU16), and
+//! [`FixedU32<Frac>`](const_fixed::FixedU32) implement every trait, and
+//! [`Finite<f32>`](crate::float::Finite) and `Finite<f64>` implement [`SampleValue`].
+//!
+//! A fixed-point word delegates its comparisons, differences, sums, and histogram cells to the
+//! integer word of the same width and signedness, so its raw-bit accumulators and bounds are that
+//! integer word's. Each raw bit represents `2^-Frac` sample units; [`crate::fixed_point`] converts
+//! raw-unit means, variances, and magnitudes back into fixed-point values.
 //!
 //! The offset and span kernels behind [`LinearHistogram`](crate::online::LinearHistogram) are
 //! crate-private because they are exact only under a precondition (`lower <= upper`) that a caller
@@ -110,39 +118,45 @@ c0nst::c0nst! {
         const ZERO: Self;
     }
 
-    /// An integer sample type with its width-dependent limits.
+    /// An integer or fixed-point sample type with its width-dependent limits.
     ///
-    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-    /// `u32` implement it. Its limits `MIN`, `MAX` and `ZERO` come from [`SampleValue`].
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32`, the unsigned words `u8`, `u16`,
+    /// `u32`, and the fixed-point words [`FixedI8<Frac>`](const_fixed::FixedI8),
+    /// [`FixedI16<Frac>`](const_fixed::FixedI16), [`FixedI32<Frac>`](const_fixed::FixedI32),
+    /// [`FixedU8<Frac>`](const_fixed::FixedU8), [`FixedU16<Frac>`](const_fixed::FixedU16), and
+    /// [`FixedU32<Frac>`](const_fixed::FixedU32) implement it. Its limits `MIN`, `MAX` and `ZERO`
+    /// come from [`SampleValue`].
     pub c0nst trait SampleWord: [c0nst] crate::sealed::SampleWord + [c0nst] SampleValue {
         /// Width of the word in bits.
         const BITS: u32;
         /// Largest `F` for which `(MAX - MIN) << F` fits `i64`, so a Q-format sample and the
         /// difference of two Q-format samples cannot overflow `i64` at `F` fractional bits.
         const I64_Q_HEADROOM_BITS: u32;
-        /// Fractional bits of the word's sample units: `0` for an integer word.
+        /// Fractional bits of the word's sample units: `0` for an integer word, `Frac` for a
+        /// fixed-point word.
         const FRACTIONAL_BITS: u32;
 
-        /// Exact widening to `i64`, which holds every word.
+        /// Exact widening of the raw value to `i64`, which holds every word.
         fn to_i64(self) -> i64;
-        /// Exact narrowing from `i64`, or `None` outside the word.
+        /// Exact narrowing of a raw value from `i64`, or `None` outside the word.
         fn try_from_i64(value: i64) -> Option<Self>;
 
-        /// Signed type that holds every difference `a - b` of two words: `i16`, `i32` and `i64` for
-        /// the 8-, 16- and 32-bit words, signed or unsigned. A difference of two unsigned words can be
-        /// negative, so it is never the word itself.
+        /// Signed type that holds every raw difference `a - b` of two words: `i16`, `i32` and `i64`
+        /// for the 8-, 16- and 32-bit words, signed or unsigned. A difference of two unsigned words
+        /// can be negative, so it is never the word itself.
         type Difference: Copy + Ord + core::fmt::Debug + Into<i64>;
 
-        /// Exact signed difference `self - other`.
+        /// Exact signed raw difference `self - other`.
         fn difference(self, other: Self) -> Self::Difference;
     }
 
     /// A sample word with the sum and square-sum types that raw moments need.
     ///
-    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
-    /// `u32` implement it. A signed word's sums are signed and an unsigned word's are unsigned, each
-    /// proven from the word's extremes to hold as many samples as a counter of
-    /// [`Self::MAX_COUNTER_BITS`] bits can count; see the module table.
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32`, the unsigned words `u8`, `u16`,
+    /// `u32`, and their `const_fixed` fixed-point counterparts implement it. A signed word's sums
+    /// are signed and an unsigned word's are unsigned, each proven from the word's extremes to hold
+    /// as many samples as a counter of [`Self::MAX_COUNTER_BITS`] bits can count; see the module
+    /// table.
     pub c0nst trait MomentWord: [c0nst] SampleWord + [c0nst] crate::sealed::MomentWord {
         /// Type holding the sum of `2^MAX_COUNTER_BITS - 1` words: signed for a signed word,
         /// unsigned for an unsigned one.
@@ -179,9 +193,10 @@ c0nst::c0nst! {
 
     /// A sample word with the kernels the histograms need.
     ///
-    /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`,
-    /// `u16`, `u32` implement it. Its crate-private supertrait holds the linear-histogram offset
-    /// and span kernels, which only the crate can call.
+    /// The trait is sealed: the signed words `i8`, `i16`, `i32`, the unsigned words `u8`, `u16`,
+    /// `u32`, and their `const_fixed` fixed-point counterparts implement it. Its crate-private
+    /// supertrait holds the linear-histogram offset and span kernels, which only the crate can
+    /// call.
     pub c0nst trait HistogramWord: [c0nst] SampleWord + [c0nst] crate::sealed::HistogramWord {
         /// Number of canonical cells in the word's full-resolution power-of-two partition, a power
         /// of two so that coarsening is a shift.
@@ -614,6 +629,192 @@ unsigned_histogram_word!(u8);
 unsigned_histogram_word!(u16);
 unsigned_histogram_word!(u32);
 
+/// Fixed-point sample word implementation for `const_fixed`'s signed (`FixedI8<Frac>`,
+/// `FixedI16<Frac>`, `FixedI32<Frac>`) and unsigned (`FixedU8<Frac>`, `FixedU16<Frac>`,
+/// `FixedU32<Frac>`) types.
+///
+/// Every operation delegates to the integer word `$bits` of the same width and signedness, so the
+/// accumulator types, bounds, and power-of-two partition match `$bits`.
+macro_rules! fixed_sample_word {
+    ($fixed:ident, $bits:ty, $leq:ident, $prefix:literal, [$($frac:literal)*]) => {
+        impl<Frac: const_fixed::types::extra::$leq> crate::sealed::IntegerName
+            for const_fixed::$fixed<Frac>
+        {
+            const NAME: &'static str = {
+                const NAMES: &[&str] = &[$(concat!($prefix, $frac)),*];
+                // Compile-time indexing: `Frac <= BITS` by its bound, and `NAMES` has `BITS + 1`
+                // entries.
+                NAMES[<Frac as const_fixed::types::extra::Unsigned>::USIZE]
+            };
+        }
+
+        c0nst::c0nst! {
+            c0nst impl<Frac: const_fixed::types::extra::$leq> crate::sealed::SampleValue
+                for const_fixed::$fixed<Frac>
+            {
+                #[inline(always)]
+                fn above(self, threshold: Self) -> bool {
+                    self.to_bits() > threshold.to_bits()
+                }
+
+                #[inline(always)]
+                fn at_or_above(self, threshold: Self) -> bool {
+                    self.to_bits() >= threshold.to_bits()
+                }
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> crate::sealed::SampleWord
+                for const_fixed::$fixed<Frac>
+            {
+                #[inline(always)]
+                fn absolute_difference(self, other: Self) -> u64 {
+                    <$bits as crate::sealed::SampleWord>::absolute_difference(
+                        self.to_bits(),
+                        other.to_bits(),
+                    )
+                }
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> crate::sealed::MomentWord
+                for const_fixed::$fixed<Frac>
+            {
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> SampleValue
+                for const_fixed::$fixed<Frac>
+            {
+                const MIN: Self = Self::from_bits(<$bits>::MIN);
+                const MAX: Self = Self::from_bits(<$bits>::MAX);
+                const ZERO: Self = Self::from_bits(0);
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> SampleWord
+                for const_fixed::$fixed<Frac>
+            {
+                const BITS: u32 = <$bits>::BITS;
+                const I64_Q_HEADROOM_BITS: u32 = i64_q_headroom_bits(<$bits>::BITS);
+                const FRACTIONAL_BITS: u32 = <Frac as const_fixed::types::extra::Unsigned>::U32;
+
+                #[inline(always)]
+                fn to_i64(self) -> i64 {
+                    self.to_bits() as i64
+                }
+
+                #[inline(always)]
+                fn try_from_i64(value: i64) -> Option<Self> {
+                    match <$bits as SampleWord>::try_from_i64(value) {
+                        Some(bits) => Some(Self::from_bits(bits)),
+                        None => None,
+                    }
+                }
+
+                type Difference = <$bits as SampleWord>::Difference;
+
+                #[inline(always)]
+                fn difference(self, other: Self) -> Self::Difference {
+                    <$bits as SampleWord>::difference(self.to_bits(), other.to_bits())
+                }
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> MomentWord
+                for const_fixed::$fixed<Frac>
+            {
+                type Sum = <$bits as MomentWord>::Sum;
+                type SquareSum = <$bits as MomentWord>::SquareSum;
+                type Mean = <$bits as MomentWord>::Mean;
+                const MAX_COUNTER_BITS: u32 = <$bits as MomentWord>::MAX_COUNTER_BITS;
+                const ZERO_SUM: Self::Sum = <$bits as MomentWord>::ZERO_SUM;
+                const ZERO_SQUARE_SUM: Self::SquareSum = <$bits as MomentWord>::ZERO_SQUARE_SUM;
+
+                #[inline(always)]
+                fn to_sum(self) -> Self::Sum {
+                    <$bits as MomentWord>::to_sum(self.to_bits())
+                }
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> crate::sealed::HistogramWord
+                for const_fixed::$fixed<Frac>
+            {
+                #[inline(always)]
+                fn offset_from(self, lower: Self, internal: crate::sealed::Internal) -> u64 {
+                    <$bits as crate::sealed::HistogramWord>::offset_from(
+                        self.to_bits(),
+                        lower.to_bits(),
+                        internal,
+                    )
+                }
+
+                #[inline(always)]
+                fn span_values(
+                    lower: Self,
+                    upper: Self,
+                    internal: crate::sealed::Internal,
+                ) -> NonZeroU64 {
+                    <$bits as crate::sealed::HistogramWord>::span_values(
+                        lower.to_bits(),
+                        upper.to_bits(),
+                        internal,
+                    )
+                }
+            }
+
+            c0nst impl<Frac: const_fixed::types::extra::$leq> HistogramWord
+                for const_fixed::$fixed<Frac>
+            {
+                const POWER_OF_TWO_CELLS: usize = <$bits as HistogramWord>::POWER_OF_TWO_CELLS;
+
+                #[inline(always)]
+                fn power_of_two_cell(self) -> usize {
+                    <$bits as HistogramWord>::power_of_two_cell(self.to_bits())
+                }
+
+                fn power_of_two_cell_bounds(
+                    cell: usize,
+                ) -> Option<crate::histogram::HistogramBounds<Self>> {
+                    match <$bits as HistogramWord>::power_of_two_cell_bounds(cell) {
+                        Some(bounds) => Some(crate::histogram::HistogramBounds::from_ordered(
+                            Self::from_bits(bounds.lower()),
+                            Self::from_bits(bounds.upper()),
+                        )),
+                        None => None,
+                    }
+                }
+            }
+        }
+    };
+}
+
+fixed_sample_word!(FixedI8, i8, LeEqU8, "i8q", [0 1 2 3 4 5 6 7 8]);
+fixed_sample_word!(
+    FixedI16,
+    i16,
+    LeEqU16,
+    "i16q",
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
+);
+fixed_sample_word!(
+    FixedI32,
+    i32,
+    LeEqU32,
+    "i32q",
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32]
+);
+fixed_sample_word!(FixedU8, u8, LeEqU8, "u8q", [0 1 2 3 4 5 6 7 8]);
+fixed_sample_word!(
+    FixedU16,
+    u16,
+    LeEqU16,
+    "u16q",
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
+);
+fixed_sample_word!(
+    FixedU32,
+    u32,
+    LeEqU32,
+    "u32q",
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32]
+);
+
 #[cfg(test)]
 mod tests {
     use super::{HistogramWord, MomentWord, SampleValue, SampleWord};
@@ -811,13 +1012,19 @@ mod tests {
         );
     }
 
-    fn check_word_conversions_and_differences<S: HistogramWord + Into<i64>>(expected_name: &str) {
+    fn check_word_conversions_and_differences<S: HistogramWord + MomentWord>(
+        expected_name: &str,
+        expected_fractional_bits: u32,
+        lo: i64,
+        hi: i64,
+    ) {
         assert_eq!(S::NAME, expected_name);
-        assert_eq!(S::FRACTIONAL_BITS, 0);
-        let (lo, hi): (i64, i64) = (S::MIN.into(), S::MAX.into());
+        assert_eq!(S::FRACTIONAL_BITS, expected_fractional_bits);
         assert_eq!(S::MIN.to_i64(), lo);
         assert_eq!(S::MAX.to_i64(), hi);
         assert_eq!(S::ZERO.to_i64(), 0);
+        assert_eq!(S::MIN.to_sum().into(), i128::from(lo));
+        assert_eq!(S::MAX.to_sum().into(), i128::from(hi));
         assert_eq!(S::try_from_i64(lo), Some(S::MIN));
         assert_eq!(S::try_from_i64(hi), Some(S::MAX));
         assert_eq!(S::try_from_i64(lo - 1), None);
@@ -860,12 +1067,36 @@ mod tests {
 
     #[test]
     fn conversions_and_differences_hold_at_every_word() {
-        check_word_conversions_and_differences::<i8>("i8");
-        check_word_conversions_and_differences::<i16>("i16");
-        check_word_conversions_and_differences::<i32>("i32");
-        check_word_conversions_and_differences::<u8>("u8");
-        check_word_conversions_and_differences::<u16>("u16");
-        check_word_conversions_and_differences::<u32>("u32");
+        use const_fixed::types::extra::{U4, U8, U12, U15, U16, U24};
+        use const_fixed::{FixedI8, FixedI16, FixedI32, FixedU8, FixedU16, FixedU32};
+
+        check_word_conversions_and_differences::<i8>("i8", 0, i8::MIN.into(), i8::MAX.into());
+        check_word_conversions_and_differences::<i16>("i16", 0, i16::MIN.into(), i16::MAX.into());
+        check_word_conversions_and_differences::<i32>("i32", 0, i32::MIN.into(), i32::MAX.into());
+        check_word_conversions_and_differences::<u8>("u8", 0, 0, u8::MAX.into());
+        check_word_conversions_and_differences::<u16>("u16", 0, 0, u16::MAX.into());
+        check_word_conversions_and_differences::<u32>("u32", 0, 0, u32::MAX.into());
+        check_word_conversions_and_differences::<FixedI8<U4>>(
+            "i8q4",
+            4,
+            i8::MIN.into(),
+            i8::MAX.into(),
+        );
+        check_word_conversions_and_differences::<FixedI16<U15>>(
+            "i16q15",
+            15,
+            i16::MIN.into(),
+            i16::MAX.into(),
+        );
+        check_word_conversions_and_differences::<FixedI32<U16>>(
+            "i32q16",
+            16,
+            i32::MIN.into(),
+            i32::MAX.into(),
+        );
+        check_word_conversions_and_differences::<FixedU8<U8>>("u8q8", 8, 0, u8::MAX.into());
+        check_word_conversions_and_differences::<FixedU16<U12>>("u16q12", 12, 0, u16::MAX.into());
+        check_word_conversions_and_differences::<FixedU32<U24>>("u32q24", 24, 0, u32::MAX.into());
         assert_eq!(0_i16.power_of_two_cell(), 16);
         assert_eq!(0_u16.power_of_two_cell(), 0);
         assert_eq!(super::power_of_two_cells(16), 32);

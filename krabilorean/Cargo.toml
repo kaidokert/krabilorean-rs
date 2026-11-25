@@ -9,7 +9,9 @@ keywords = ["no-std", "embedded", "time-series", "statistics", "signal"]
 categories = ["embedded", "no-std"]
 
 [features]
-nightly = ["c0nst/nightly"]
+nightly = ["c0nst/nightly", "const-num-traits/nightly"]
 
 [dependencies]
 c0nst = { version = "0.2.1", default-features = false }
+const-fixed = { version = "0.1.0", default-features = false, features = ["const-num-traits"] }
+const-num-traits = { version = "0.3.0", default-features = false }
