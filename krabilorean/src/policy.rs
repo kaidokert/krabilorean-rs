@@ -101,6 +101,11 @@ c0nst::c0nst! {
     {
         /// The word's identifier in semantic metadata (`"u8"`, `"u16"`, `"u32"`, or `"u64"`).
         const NAME: &'static str;
+        /// Width of the counter word in bits (`8`, `16`, `32`, or `64`).
+        ///
+        /// Accumulating families compare `BITS` against their proven accumulator capacity so
+        /// width proofs track the selected counter word rather than assuming `u32`.
+        const BITS: u32;
         /// Zero samples.
         const ZERO: Self;
         /// One sample.
@@ -121,6 +126,9 @@ c0nst::c0nst! {
         fn checked_sub(self, other: Self) -> Option<Self>;
         /// Exact widening conversion to `u64`.
         fn to_u64(self) -> u64;
+        /// Converts a non-zero count to [`NonZeroU32`](core::num::NonZeroU32), or returns `None`
+        /// when it exceeds `u32::MAX`. Always `Some` for `u8`, `u16`, and `u32`.
+        fn non_zero_u32(count: Self::NonZero) -> Option<core::num::NonZeroU32>;
         /// Narrowing conversion from `u64`, returning `None` when `value > Self::MAX`.
         fn from_u64(value: u64) -> Option<Self>;
         /// Zero-based order-statistic rank `floor(quantile * (samples - 1))`, which is at most
@@ -130,12 +138,13 @@ c0nst::c0nst! {
 }
 
 macro_rules! counter_word {
-    ($($type:ident, $non_zero:ident, $name:literal, |$quantile:ident, $samples:ident| $rank:expr);* $(;)?) => {$(
+    ($($type:ident, $non_zero:ident, $name:literal, |$quantile:ident, $samples:ident| $rank:expr, |$count:ident| $narrow:expr);* $(;)?) => {$(
         c0nst::c0nst! {
             c0nst impl crate::sealed::CounterWord for $type {}
 
             c0nst impl CounterWord for $type {
                 const NAME: &'static str = $name;
+                const BITS: u32 = $type::BITS;
                 const ZERO: Self = 0;
                 const ONE: Self = 1;
                 const MAX: Self = $type::MAX;
@@ -164,6 +173,11 @@ macro_rules! counter_word {
                 #[inline(always)]
                 fn to_u64(self) -> u64 {
                     self as u64
+                }
+
+                #[inline(always)]
+                fn non_zero_u32($count: Self::NonZero) -> Option<core::num::NonZeroU32> {
+                    $narrow
                 }
 
                 #[inline(always)]
@@ -309,10 +323,17 @@ c0nst::c0nst! {
 // Narrow counter words widen `samples - 1` into `u32` and narrow the rank back: the rank is at
 // most `samples - 1`, so it fits the word. `u64` computes the rank in `u128`.
 counter_word!(
-    u8, NonZeroU8, "u8", |quantile, samples| quantile.rank_less_one((samples.get() - 1) as u32) as u8;
-    u16, NonZeroU16, "u16", |quantile, samples| quantile.rank_less_one((samples.get() - 1) as u32) as u16;
-    u32, NonZeroU32, "u32", |quantile, samples| quantile.rank(samples);
-    u64, NonZeroU64, "u64", |quantile, samples| quantile.rank_u64(samples);
+    u8, NonZeroU8, "u8", |quantile, samples| quantile.rank_less_one((samples.get() - 1) as u32) as u8,
+        |count| core::num::NonZeroU32::new(count.get() as u32);
+    u16, NonZeroU16, "u16", |quantile, samples| quantile.rank_less_one((samples.get() - 1) as u32) as u16,
+        |count| core::num::NonZeroU32::new(count.get() as u32);
+    u32, NonZeroU32, "u32", |quantile, samples| quantile.rank(samples), |count| Some(count);
+    u64, NonZeroU64, "u64", |quantile, samples| quantile.rank_u64(samples),
+        |count| if count.get() <= u32::MAX as u64 {
+            core::num::NonZeroU32::new(count.get() as u32)
+        } else {
+            None
+        };
 );
 
 #[cfg(test)]
@@ -574,8 +595,46 @@ mod tests {
         assert_eq!(u32::get(u32::ONE.non_zero().expect("one")), 1);
         assert_eq!(u64::get(u64::ONE.non_zero().expect("one")), 1);
         assert_eq!(
+            u8::non_zero_u32(u8::MAX.non_zero().expect("non-zero")).map(|n| n.get()),
+            Some(u32::from(u8::MAX))
+        );
+        assert_eq!(
+            u16::non_zero_u32(u16::MAX.non_zero().expect("non-zero")).map(|n| n.get()),
+            Some(u32::from(u16::MAX))
+        );
+        assert_eq!(
+            u32::non_zero_u32(u32::MAX.non_zero().expect("non-zero")).map(|n| n.get()),
+            Some(u32::MAX)
+        );
+        assert_eq!(
+            u64::non_zero_u32(
+                u64::from(u32::MAX)
+                    .non_zero()
+                    .expect("u32::MAX is non-zero")
+            )
+            .map(|n| n.get()),
+            Some(u32::MAX)
+        );
+        assert_eq!(
+            u64::non_zero_u32(
+                (u64::from(u32::MAX) + 1)
+                    .non_zero()
+                    .expect("above u32::MAX is non-zero")
+            ),
+            None
+        );
+        assert_eq!(
             [u8::NAME, u16::NAME, u32::NAME, u64::NAME],
             ["u8", "u16", "u32", "u64"]
+        );
+        assert_eq!(
+            [
+                <u8 as CounterWord>::BITS,
+                <u16 as CounterWord>::BITS,
+                <u32 as CounterWord>::BITS,
+                <u64 as CounterWord>::BITS,
+            ],
+            [8, 16, 32, 64]
         );
     }
 

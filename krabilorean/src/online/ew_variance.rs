@@ -1,10 +1,9 @@
 //! Constant-state exponentially weighted mean and central variance.
 
 use core::marker::PhantomData;
-use core::num::NonZeroU32;
 
 use crate::arithmetic::RoundingPolicy;
-use crate::policy::OverflowPolicy;
+use crate::policy::{CounterWord, OverflowPolicy};
 use crate::sample::SampleWord;
 use crate::{Error, Quality};
 
@@ -12,9 +11,9 @@ type Policies<R, O, S> = PhantomData<fn() -> (R, O, S)>;
 
 /// Exponentially weighted mean and central variance in declared fixed-point formats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EwVarianceSnapshot {
+pub struct EwVarianceSnapshot<C: CounterWord> {
     /// Accepted sample count, which may saturate under a saturating policy.
-    pub samples: NonZeroU32,
+    pub samples: C::NonZero,
     /// Weighted mean in Q`fractional_bits`.
     pub mean_q: i64,
     /// Non-negative weighted central variance in Q`2 * fractional_bits` squared sample units.
@@ -29,8 +28,14 @@ pub struct EwVarianceSnapshot {
 }
 
 const _: () = assert!(
-    core::mem::size_of::<Option<EwVarianceSnapshot>>()
-        == core::mem::size_of::<EwVarianceSnapshot>()
+    core::mem::size_of::<Option<EwVarianceSnapshot<u8>>>()
+        == core::mem::size_of::<EwVarianceSnapshot<u8>>()
+        && core::mem::size_of::<Option<EwVarianceSnapshot<u16>>>()
+            == core::mem::size_of::<EwVarianceSnapshot<u16>>()
+        && core::mem::size_of::<Option<EwVarianceSnapshot<u32>>>()
+            == core::mem::size_of::<EwVarianceSnapshot<u32>>()
+        && core::mem::size_of::<Option<EwVarianceSnapshot<u64>>>()
+            == core::mem::size_of::<EwVarianceSnapshot<u64>>()
 );
 
 /// Exponentially weighted mean and variance using the West central-moment recurrence.
@@ -40,12 +45,13 @@ const _: () = assert!(
 /// the selected power-of-two rounding policy. The quantized recurrence is path-dependent and
 /// models an exponentially weighted history.
 ///
-/// The mean is held in `i64` and the variance in `u128` at every sample width;
-/// [`EwVariance::new`] accepts only formats in which every intermediate and state value is proven
-/// to fit.
+/// `C` is the counter word of the sample count, and `O` rejects or saturates an update that `C`
+/// cannot count. `S` is the sample word. The mean is held in `i64` and the variance in `u128` at
+/// every sample width; [`EwVariance::new`] accepts only formats in which every intermediate and
+/// state value is proven to fit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EwVariance<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, S> {
-    samples: u32,
+pub struct EwVariance<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, C, S> {
+    samples: C,
     mean_q: i64,
     variance_q: u128,
     quality: Quality,
@@ -53,8 +59,8 @@ pub struct EwVariance<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, 
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct EwVarianceDelta {
-    samples: u32,
+pub(crate) struct EwVarianceDelta<C> {
+    samples: C,
     mean_q: i64,
     variance_q: u128,
     quality: Quality,
@@ -109,7 +115,7 @@ const _: () = assert!(ew_variance_max_fractional_bits(16) == 31);
 const _: () =
     assert!(ew_variance_max_fractional_bits(16) <= <i16 as SampleWord>::I64_Q_HEADROOM_BITS);
 
-impl<const A: u32, const F: u32, R, O, S: SampleWord> EwVariance<A, F, R, O, S> {
+impl<const A: u32, const F: u32, R, O, C: CounterWord, S: SampleWord> EwVariance<A, F, R, O, C, S> {
     /// Creates an empty weighted state after proving its shifts and products fit.
     ///
     /// `ALPHA_SHIFT` must be at most [`EW_VARIANCE_MAX_ALPHA_SHIFT`], and `FRACTIONAL_BITS` at
@@ -117,7 +123,7 @@ impl<const A: u32, const F: u32, R, O, S: SampleWord> EwVariance<A, F, R, O, S> 
     pub const fn new() -> Result<Self, Error> {
         if A <= EW_VARIANCE_MAX_ALPHA_SHIFT && F <= ew_variance_max_fractional_bits(S::BITS) {
             Ok(Self {
-                samples: 0,
+                samples: C::ZERO,
                 mean_q: 0,
                 variance_q: 0,
                 quality: Quality::Approximate,
@@ -128,24 +134,9 @@ impl<const A: u32, const F: u32, R, O, S: SampleWord> EwVariance<A, F, R, O, S> 
         }
     }
 
-    /// Returns `None` until the first sample is accepted.
-    pub const fn snapshot(&self) -> Option<EwVarianceSnapshot> {
-        let Some(samples) = NonZeroU32::new(self.samples) else {
-            return None;
-        };
-        Some(EwVarianceSnapshot {
-            samples,
-            mean_q: self.mean_q,
-            variance_q: self.variance_q,
-            fractional_bits: F.saturating_add(S::FRACTIONAL_BITS),
-            alpha_shift: A,
-            quality: self.quality,
-        })
-    }
-
     /// Clears all weighted state.
     pub const fn reset(&mut self) {
-        self.samples = 0;
+        self.samples = C::ZERO;
         self.mean_q = 0;
         self.variance_q = 0;
         self.quality = Quality::Approximate;
@@ -153,8 +144,36 @@ impl<const A: u32, const F: u32, R, O, S: SampleWord> EwVariance<A, F, R, O, S> 
 }
 
 c0nst::c0nst! {
-    impl<const A: u32, const F: u32, R: RoundingPolicy, O: OverflowPolicy, S: SampleWord>
-        EwVariance<A, F, R, O, S>
+    impl<const A: u32, const F: u32, R, O, C: CounterWord, S: SampleWord>
+        EwVariance<A, F, R, O, C, S>
+    {
+        /// Returns `None` until the first sample is accepted.
+        pub c0nst fn snapshot(&self) -> Option<EwVarianceSnapshot<C>>
+        where
+            C: [c0nst] CounterWord,
+        {
+            match self.samples.non_zero() {
+                Some(samples) => Some(EwVarianceSnapshot {
+                    samples,
+                    mean_q: self.mean_q,
+                    variance_q: self.variance_q,
+                    fractional_bits: F.saturating_add(S::FRACTIONAL_BITS),
+                    alpha_shift: A,
+                    quality: self.quality,
+                }),
+                None => None,
+            }
+        }
+    }
+
+    impl<
+        const A: u32,
+        const F: u32,
+        R: RoundingPolicy,
+        O: OverflowPolicy,
+        C: CounterWord,
+        S: SampleWord,
+    > EwVariance<A, F, R, O, C, S>
     {
         /// Accepts one sample transactionally in constant time.
         #[allow(clippy::question_mark)]
@@ -162,6 +181,7 @@ c0nst::c0nst! {
         where
             R: [c0nst] RoundingPolicy,
             O: [c0nst] OverflowPolicy,
+            C: [c0nst] CounterWord,
             S: [c0nst] SampleWord,
         {
             let delta = match self.prepare(sample) {
@@ -173,13 +193,14 @@ c0nst::c0nst! {
         }
 
         #[allow(clippy::question_mark)]
-        pub(crate) c0nst fn prepare(&self, sample: S) -> Result<EwVarianceDelta, Error>
+        pub(crate) c0nst fn prepare(&self, sample: S) -> Result<EwVarianceDelta<C>, Error>
         where
             R: [c0nst] RoundingPolicy,
             O: [c0nst] OverflowPolicy,
+            C: [c0nst] CounterWord,
             S: [c0nst] SampleWord,
         {
-            let samples = match O::add_u32(self.samples, 1) {
+            let samples = match C::add::<O>(self.samples, C::ONE) {
                 Ok(samples) => samples,
                 Err(error) => return Err(error),
             };
@@ -187,7 +208,7 @@ c0nst::c0nst! {
             // `mean_delta`, and `residual_after` fit `i64`, and `innovation`, `self.variance_q`,
             // and the updated variance lie in `0..2^126`.
             let sample_q = sample.to_i64() << F;
-            let (mean_q, variance_q) = if self.samples == 0 {
+            let (mean_q, variance_q) = if self.samples.non_zero().is_none() {
                 (sample_q, 0_u128)
             } else {
                 let internal = crate::sealed::Internal::new();
@@ -211,7 +232,7 @@ c0nst::c0nst! {
             })
         }
 
-        pub(crate) const fn commit(&mut self, delta: EwVarianceDelta) {
+        pub(crate) const fn commit(&mut self, delta: EwVarianceDelta<C>) {
             self.samples = delta.samples;
             self.mean_q = delta.mean_q;
             self.variance_q = delta.variance_q;
@@ -223,11 +244,12 @@ c0nst::c0nst! {
 #[cfg(test)]
 mod tests {
     use core::marker::PhantomData;
+    use core::mem::size_of;
     use core::num::NonZeroU32;
 
     use super::{EwVariance, ew_variance_fits, ew_variance_max_fractional_bits};
     use crate::arithmetic::NearestTiesAway;
-    use crate::policy::{Checked, Saturating};
+    use crate::policy::{Checked, CounterWord, Saturating};
     use crate::sample::SampleWord;
     use crate::{Error, Quality};
 
@@ -236,7 +258,8 @@ mod tests {
         assert!(ew_variance_fits(32, 31));
         assert!(!ew_variance_fits(u32::MAX, 1));
         assert_eq!(ew_variance_max_fractional_bits(40), 23);
-        let mut variance = EwVariance::<2, 8, NearestTiesAway, Checked, i16>::new().expect("valid");
+        let mut variance =
+            EwVariance::<2, 8, NearestTiesAway, Checked, u32, i16>::new().expect("valid");
         assert_eq!(variance.snapshot(), None);
         for _ in 0..8 {
             variance.update(42).expect("representable");
@@ -252,9 +275,9 @@ mod tests {
         assert_eq!(variance.snapshot(), None);
     }
 
-    fn every_width_fails_transactionally<S: SampleWord>() {
-        let full = EwVariance::<2, 31, NearestTiesAway, Checked, S> {
-            samples: u32::MAX,
+    fn every_width_fails_transactionally<C: CounterWord, S: SampleWord>() {
+        let full = EwVariance::<2, 31, NearestTiesAway, Checked, C, S> {
+            samples: C::MAX,
             mean_q: 3,
             variance_q: 9,
             quality: Quality::Approximate,
@@ -265,8 +288,8 @@ mod tests {
         assert_eq!(variance.update(S::MIN), Err(Error::Overflow));
         assert_eq!(variance, full);
 
-        let mut saturating = EwVariance::<2, 31, NearestTiesAway, Saturating, S> {
-            samples: u32::MAX,
+        let mut saturating = EwVariance::<2, 31, NearestTiesAway, Saturating, C, S> {
+            samples: C::MAX,
             mean_q: 0,
             variance_q: 0,
             quality: Quality::Approximate,
@@ -274,7 +297,7 @@ mod tests {
         };
         saturating.update(S::MAX).expect("saturating accepts");
         let snapshot = saturating.snapshot().expect("defined");
-        assert_eq!(snapshot.samples.get(), u32::MAX);
+        assert_eq!(C::get(snapshot.samples), C::MAX);
         assert_eq!(snapshot.quality, Quality::ApproximateSaturated);
         saturating
             .update(S::MIN)
@@ -285,26 +308,37 @@ mod tests {
         );
     }
 
+    fn checked_failure_for_counter<C: CounterWord>() {
+        every_width_fails_transactionally::<C, i8>();
+        every_width_fails_transactionally::<C, i16>();
+        every_width_fails_transactionally::<C, i32>();
+        every_width_fails_transactionally::<C, u8>();
+        every_width_fails_transactionally::<C, u16>();
+        every_width_fails_transactionally::<C, u32>();
+    }
+
     #[test]
-    fn checked_failure_is_transactional_at_every_width() {
-        every_width_fails_transactionally::<i8>();
-        every_width_fails_transactionally::<i16>();
-        every_width_fails_transactionally::<i32>();
-        every_width_fails_transactionally::<u8>();
-        every_width_fails_transactionally::<u16>();
-        every_width_fails_transactionally::<u32>();
+    fn checked_failure_is_transactional_at_every_counter_and_sample_word() {
+        checked_failure_for_counter::<u8>();
+        checked_failure_for_counter::<u16>();
+        checked_failure_for_counter::<u32>();
+        checked_failure_for_counter::<u64>();
+        assert!(
+            size_of::<EwVariance<4, 8, NearestTiesAway, Checked, u8, i16>>()
+                <= size_of::<EwVariance<4, 8, NearestTiesAway, Checked, u32, i16>>()
+        );
     }
 
     fn formats_follow_the_validator<S: SampleWord>() {
         assert_eq!(ew_variance_max_fractional_bits(S::BITS), 31);
-        assert!(EwVariance::<0, 31, NearestTiesAway, Checked, S>::new().is_ok());
-        assert!(EwVariance::<62, 0, NearestTiesAway, Checked, S>::new().is_ok());
+        assert!(EwVariance::<0, 31, NearestTiesAway, Checked, u32, S>::new().is_ok());
+        assert!(EwVariance::<62, 0, NearestTiesAway, Checked, u32, S>::new().is_ok());
         assert_eq!(
-            EwVariance::<4, 32, NearestTiesAway, Checked, S>::new(),
+            EwVariance::<4, 32, NearestTiesAway, Checked, u32, S>::new(),
             Err(Error::InvalidConfiguration)
         );
         assert_eq!(
-            EwVariance::<63, 4, NearestTiesAway, Checked, S>::new(),
+            EwVariance::<63, 4, NearestTiesAway, Checked, u32, S>::new(),
             Err(Error::InvalidConfiguration)
         );
     }
@@ -321,7 +355,7 @@ mod tests {
 
     fn full_swing<const A: u32>() {
         let mut variance =
-            EwVariance::<A, 31, NearestTiesAway, Checked, i32>::new().expect("valid");
+            EwVariance::<A, 31, NearestTiesAway, Checked, u32, i32>::new().expect("valid");
         for index in 0..64 {
             let sample = if index % 2 == 0 { i32::MIN } else { i32::MAX };
             variance.update(sample).expect("proven not to overflow");
@@ -340,8 +374,8 @@ mod tests {
     #[cfg(feature = "nightly")]
     #[test]
     fn c0nst_ew_variance_is_const_evaluable_on_nightly() {
-        const SNAPSHOT: super::EwVarianceSnapshot = {
-            let mut variance = match EwVariance::<1, 4, NearestTiesAway, Checked, i16>::new() {
+        const SNAPSHOT: super::EwVarianceSnapshot<u16> = {
+            let mut variance = match EwVariance::<1, 4, NearestTiesAway, Checked, u16, i16>::new() {
                 Ok(v) => v,
                 Err(_) => unreachable!(),
             };

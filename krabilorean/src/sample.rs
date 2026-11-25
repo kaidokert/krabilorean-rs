@@ -10,7 +10,8 @@
 //!   conversions, the Q-format headroom, and the exact signed difference type
 //!   [`SampleWord::Difference`].
 //! - [`MomentWord`] adds the raw-moment sum and square-sum types, signed or unsigned with the
-//!   word, each proven for `u32::MAX` samples.
+//!   word, each proven to hold as many samples as a counter of [`MomentWord::MAX_COUNTER_BITS`]
+//!   bits can count.
 //! - [`HistogramWord`] adds the histogram kernels: the canonical power-of-two partition and the
 //!   linear-bin offset and span.
 //!
@@ -38,24 +39,36 @@
 //! }
 //! ```
 //!
-//! Accumulator widths are formulas of the word's `BITS`, each checked against its type at compile
-//! time for every word:
+//! Accumulator widths are formulas of the word's `BITS` and the counter's `counter_bits`, each
+//! checked against its type at compile time for every word:
 //!
-//! | Accumulator | Bits needed for `u32::MAX` samples | `i8` | `i16` | `i32` |
+//! | Accumulator | Bits needed for `2^counter_bits - 1` samples | `i8` | `i16` | `i32` |
 //! |---|---|---|---|---|
-//! | moments sum ([`MomentWord::Sum`]) | [`sum_bits`]: `BITS + 32`, signed | `i64` | `i64` | `i64` |
-//! | moments sum of squares ([`MomentWord::SquareSum`]) | [`square_sum_bits`]: `2 * BITS + 30` | `u64` | `u64` | `u128` |
-//! | variance numerator `N * sum(x^2) - sum(x)^2` | `32 + square_sum_bits = 2 * (sum_bits - 1)` | `u128` | `u128` | `u128` |
-//! | variance denominator `N^2` | 64 | `u64` | `u64` | `u64` |
+//! | moments sum ([`MomentWord::Sum`]) | [`sum_bits`]: `BITS + counter_bits`, signed | `i64` | `i64` | `i64` |
+//! | moments sum of squares ([`MomentWord::SquareSum`]) | [`square_sum_bits`]: `2 * BITS - 2 + counter_bits` | `u64` | `u64` | `u128` |
+//! | variance numerator `N * sum(x^2) - sum(x)^2` | `counter_bits + square_sum_bits = 2 * (sum_bits - 1)` | `u128` | `u128` | `u128` |
+//! | variance denominator `N^2` | `2 * counter_bits` | `u64` | `u64` | `u64` |
 //!
 //! The unsigned words have their own formulas, because their extreme is `MAX = 2^BITS - 1`, not
 //! `|MIN| = 2^(BITS - 1)`:
 //!
-//! | Accumulator | Bits needed for `u32::MAX` samples | `u8` | `u16` | `u32` |
+//! | Accumulator | Bits needed for `2^counter_bits - 1` samples | `u8` | `u16` | `u32` |
 //! |---|---|---|---|---|
-//! | moments sum ([`MomentWord::Sum`]) | [`unsigned_sum_bits`]: `BITS + 32`, unsigned | `u64` | `u64` | `u64` |
-//! | moments sum of squares ([`MomentWord::SquareSum`]) | [`unsigned_square_sum_bits`]: `2 * BITS + 32` | `u64` | `u64` | `u128` |
-//! | variance numerator | `32 + unsigned_square_sum_bits = 2 * unsigned_sum_bits` | `u128` | `u128` | `u128` |
+//! | moments sum ([`MomentWord::Sum`]) | [`unsigned_sum_bits`]: `BITS + counter_bits`, unsigned | `u64` | `u64` | `u64` |
+//! | moments sum of squares ([`MomentWord::SquareSum`]) | [`unsigned_square_sum_bits`]: `2 * BITS + counter_bits` | `u64` | `u64` | `u128` |
+//! | variance numerator | `counter_bits + unsigned_square_sum_bits = 2 * unsigned_sum_bits` | `u128` | `u128` | `u128` |
+//!
+//! Every word's [`MomentWord::Sum`] and [`MomentWord::SquareSum`] hold any `u8`, `u16`, or `u32`
+//! sample count; none holds a `u64` count:
+//!
+//! | Word | [`MomentWord::MAX_COUNTER_BITS`] |
+//! |---|---|
+//! | `i8` | 50 |
+//! | `i16` | 34 |
+//! | `i32` | 32 |
+//! | `u8` | 48 |
+//! | `u16` | 32 |
+//! | `u32` | 32 |
 //!
 //! The square of a moment sum is exact only for a single widened sample, and a snapshot's `sum`
 //! can be far larger. Another crate can't reach it at all: the sum operations live on the sum
@@ -128,10 +141,10 @@ c0nst::c0nst! {
     ///
     /// The trait is sealed: the signed words `i8`, `i16`, `i32` and the unsigned words `u8`, `u16`,
     /// `u32` implement it. A signed word's sums are signed and an unsigned word's are unsigned, each
-    /// proven from the word's extremes to hold [`Self::MAX_PROVEN_SAMPLES`] samples; see the module
-    /// table.
+    /// proven from the word's extremes to hold as many samples as a counter of
+    /// [`Self::MAX_COUNTER_BITS`] bits can count; see the module table.
     pub c0nst trait MomentWord: [c0nst] SampleWord + [c0nst] crate::sealed::MomentWord {
-        /// Type holding the sum of [`Self::MAX_PROVEN_SAMPLES`] words: signed for a signed word,
+        /// Type holding the sum of `2^MAX_COUNTER_BITS - 1` words: signed for a signed word,
         /// unsigned for an unsigned one.
         type Sum: Copy
             + Ord
@@ -140,7 +153,7 @@ c0nst::c0nst! {
             + [c0nst] Accumulator
             + crate::sealed::IntegerName
             + [c0nst] crate::sealed::SumOps<Self::SquareSum, Self::Mean>;
-        /// Unsigned type holding the sum of the squares of [`Self::MAX_PROVEN_SAMPLES`] words.
+        /// Unsigned type holding the sum of the squares of `2^MAX_COUNTER_BITS - 1` words.
         type SquareSum: Copy
             + Ord
             + core::fmt::Debug
@@ -152,15 +165,9 @@ c0nst::c0nst! {
         /// The exact mean `sum / N`: [`SignedRatio`] for a signed word and [`UnsignedRatio`] for an
         /// unsigned one.
         type Mean: Copy + Eq + core::fmt::Debug;
-        /// Largest sample count for which [`Self::Sum`] and [`Self::SquareSum`] are proven to hold
-        /// their sums.
-        const MAX_PROVEN_SAMPLES: u32;
-        /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] words needs: [`sum_bits`] of `BITS`, signed,
-        /// for a signed word, and [`unsigned_sum_bits`] for an unsigned one.
-        const SUM_BITS: u32;
-        /// Bits the sum of [`Self::MAX_PROVEN_SAMPLES`] squares needs: [`square_sum_bits`] of `BITS`
-        /// for a signed word, and [`unsigned_square_sum_bits`] for an unsigned one.
-        const SQUARE_SUM_BITS: u32;
+        /// Widest counter, in bits, whose maximum count of words [`Self::Sum`] and
+        /// [`Self::SquareSum`] are proven to hold.
+        const MAX_COUNTER_BITS: u32;
         /// Zero of [`Self::Sum`], usable in `const` code.
         const ZERO_SUM: Self::Sum;
         /// Zero of [`Self::SquareSum`], usable in `const` code.
@@ -195,36 +202,56 @@ c0nst::c0nst! {
     }
 }
 
-/// Signed bits that hold the sum of `u32::MAX` words of `bits` bits.
+/// Signed bits that hold the sum of `2^counter_bits - 1` words of `bits` bits.
 ///
-/// Each word's magnitude is at most `|MIN| = 2^(bits - 1)`, so `u32::MAX` of them sum to less than
-/// `2^(bits - 1 + 32)` in magnitude, which a signed type of `bits + 32` bits holds.
-pub const fn sum_bits(bits: u32) -> u32 {
-    bits.saturating_add(32)
+/// Each word's magnitude is at most `|MIN| = 2^(bits - 1)`, so `2^counter_bits - 1` of them sum
+/// to less than `2^(bits - 1 + counter_bits)` in magnitude, which a signed type of
+/// `bits + counter_bits` bits holds.
+pub const fn sum_bits(bits: u32, counter_bits: u32) -> u32 {
+    bits.saturating_add(counter_bits)
 }
 
-/// Bits that hold the sum of the squares of `u32::MAX` words of `bits` bits.
+/// Bits that hold the sum of the squares of `2^counter_bits - 1` words of `bits` bits.
 ///
-/// The largest square is `MIN^2 = 2^(2 * bits - 2)`, so `u32::MAX` of them sum to less than
-/// `2^(2 * bits - 2 + 32)`, which an unsigned type of `2 * bits + 30` bits holds.
-pub const fn square_sum_bits(bits: u32) -> u32 {
-    bits.saturating_mul(2).saturating_add(30)
+/// The largest square is `MIN^2 = 2^(2 * bits - 2)`, so `2^counter_bits - 1` of them sum to less
+/// than `2^(2 * bits - 2 + counter_bits)`, which an unsigned type of
+/// `2 * bits - 2 + counter_bits` bits holds.
+pub const fn square_sum_bits(bits: u32, counter_bits: u32) -> u32 {
+    bits.saturating_mul(2)
+        .saturating_sub(2)
+        .saturating_add(counter_bits)
 }
 
-/// Unsigned bits that hold the sum of `u32::MAX` unsigned words of `bits` bits.
+/// Unsigned bits that hold the sum of `2^counter_bits - 1` unsigned words of `bits` bits.
 ///
-/// Each word is at most `2^bits - 1`, so `u32::MAX` of them sum to less than `2^(bits + 32)`.
-pub const fn unsigned_sum_bits(bits: u32) -> u32 {
-    bits.saturating_add(32)
+/// Each word is at most `2^bits - 1`, so `2^counter_bits - 1` of them sum to less than
+/// `2^(bits + counter_bits)`.
+pub const fn unsigned_sum_bits(bits: u32, counter_bits: u32) -> u32 {
+    bits.saturating_add(counter_bits)
 }
 
-/// Bits that hold the sum of the squares of `u32::MAX` unsigned words of `bits` bits.
+/// Bits that hold the sum of the squares of `2^counter_bits - 1` unsigned words of `bits` bits.
 ///
-/// The largest square is `(2^bits - 1)^2 < 2^(2 * bits)`, so `u32::MAX` of them sum to less than
-/// `2^(2 * bits + 32)`. That is two bits more than a signed word of the same width needs, because
-/// the unsigned extreme `2^bits - 1` is about twice the signed one's magnitude `2^(bits - 1)`.
-pub const fn unsigned_square_sum_bits(bits: u32) -> u32 {
-    bits.saturating_mul(2).saturating_add(32)
+/// The largest square is `(2^bits - 1)^2 < 2^(2 * bits)`, so `2^counter_bits - 1` of them sum to
+/// less than `2^(2 * bits + counter_bits)`. That is two bits more than a signed word of the same
+/// width needs, because the unsigned extreme `2^bits - 1` is about twice the signed one's
+/// magnitude `2^(bits - 1)`.
+pub const fn unsigned_square_sum_bits(bits: u32, counter_bits: u32) -> u32 {
+    bits.saturating_mul(2).saturating_add(counter_bits)
+}
+
+/// Widest counter whose term count fits both a type of `first_type_bits` requiring `first_bits`
+/// at zero counter bits and a type of `second_type_bits` requiring `second_bits`. Each required
+/// width grows by one bit per counter bit.
+const fn max_counter_bits(
+    first_type_bits: u32,
+    first_bits: u32,
+    second_type_bits: u32,
+    second_bits: u32,
+) -> u32 {
+    let first = first_type_bits.saturating_sub(first_bits);
+    let second = second_type_bits.saturating_sub(second_bits);
+    if first < second { first } else { second }
 }
 
 /// `(MAX - MIN) = 2^BITS - 1`, and `(2^BITS - 1) << F <= i64::MAX` exactly when
@@ -317,8 +344,8 @@ macro_rules! sample_word {
         $sum_bits_fn:ident, $square_sum_bits_fn:ident
     ) => {
         const _: () = assert!(<$difference>::BITS > <$word>::BITS);
-        const _: () = assert!(<$sum>::BITS >= $sum_bits_fn(<$word>::BITS));
-        const _: () = assert!(<$square_sum>::BITS >= $square_sum_bits_fn(<$word>::BITS));
+        const _: () = assert!(<$sum>::BITS >= $sum_bits_fn(<$word>::BITS, u32::BITS));
+        const _: () = assert!(<$square_sum>::BITS >= $square_sum_bits_fn(<$word>::BITS, u32::BITS));
 
         c0nst::c0nst! {
             c0nst impl crate::sealed::SampleValue for $word {
@@ -380,9 +407,12 @@ macro_rules! sample_word {
                 type Sum = $sum;
                 type SquareSum = $square_sum;
                 type Mean = $mean;
-                const MAX_PROVEN_SAMPLES: u32 = u32::MAX;
-                const SUM_BITS: u32 = $sum_bits_fn(<$word>::BITS);
-                const SQUARE_SUM_BITS: u32 = $square_sum_bits_fn(<$word>::BITS);
+                const MAX_COUNTER_BITS: u32 = max_counter_bits(
+                    <$sum>::BITS,
+                    $sum_bits_fn(<$word>::BITS, 0),
+                    <$square_sum>::BITS,
+                    $square_sum_bits_fn(<$word>::BITS, 0),
+                );
                 const ZERO_SUM: $sum = 0;
                 const ZERO_SQUARE_SUM: $square_sum = 0;
 
@@ -623,19 +653,23 @@ mod tests {
     {
         let (min, max) = (S::LO, S::HI);
         assert_eq!(S::BITS, (max - min + 1).ilog2());
-        let n = i128::from(S::MAX_PROVEN_SAMPLES);
-        assert_eq!(S::MAX_PROVEN_SAMPLES, u32::MAX);
-        assert_eq!(S::SUM_BITS, super::sum_bits(S::BITS));
-        assert_eq!(S::SQUARE_SUM_BITS, super::square_sum_bits(S::BITS));
-        assert!(S::Sum::LO <= min * n && max * n <= S::Sum::HI);
+        assert!(S::MAX_COUNTER_BITS >= 32 && S::MAX_COUNTER_BITS < 64);
         let square = (min * min).unsigned_abs();
-        assert!(
-            square
-                .checked_mul(n.unsigned_abs())
-                .is_some_and(|total| total <= S::SquareSum::HI)
-        );
-        assert!((min * n).unsigned_abs() <= 1u128 << (S::SUM_BITS - 1));
-        assert!(square * n.unsigned_abs() < 1u128 << S::SQUARE_SUM_BITS);
+        let sums_hold = |n: u128| {
+            let signed = i128::try_from(n).ok();
+            signed
+                .and_then(|n| min.checked_mul(n))
+                .is_some_and(|sum| S::Sum::LO <= sum)
+                && signed
+                    .and_then(|n| max.checked_mul(n))
+                    .is_some_and(|sum| sum <= S::Sum::HI)
+                && square
+                    .checked_mul(n)
+                    .is_some_and(|total| total <= S::SquareSum::HI)
+        };
+        let largest = |bits: u32| (1_u128 << bits) - 1;
+        assert!(sums_hold(largest(S::MAX_COUNTER_BITS)));
+        assert!(!sums_hold(largest(S::MAX_COUNTER_BITS + 1)));
         assert_eq!(S::MIN.to_sum().into(), min);
         assert_eq!(S::MAX.to_sum().into(), max);
     }
@@ -649,18 +683,17 @@ mod tests {
     {
         let max = S::HI.unsigned_abs();
         assert_eq!(S::LO, 0);
-        assert_eq!(max + 1, 1u128 << S::BITS);
-        let n = u128::from(S::MAX_PROVEN_SAMPLES);
-        assert_eq!(S::MAX_PROVEN_SAMPLES, u32::MAX);
-        assert_eq!(S::SUM_BITS, super::unsigned_sum_bits(S::BITS));
-        assert_eq!(S::SQUARE_SUM_BITS, super::unsigned_square_sum_bits(S::BITS));
-        assert!(max * n <= S::Sum::HI);
-        assert!(max * n < 1u128 << S::SUM_BITS);
-        let squares = max * max * n;
-        assert!(squares <= S::SquareSum::HI);
-        assert!(squares < 1u128 << S::SQUARE_SUM_BITS);
-        assert!(max * n >= 1u128 << (S::SUM_BITS - 1));
-        assert!(squares >= 1u128 << (S::SQUARE_SUM_BITS - 1));
+        assert_eq!(max + 1, 1_u128 << S::BITS);
+        assert!(S::MAX_COUNTER_BITS >= 32 && S::MAX_COUNTER_BITS < 64);
+        let sums_hold = |n: u128| {
+            max.checked_mul(n).is_some_and(|sum| sum <= S::Sum::HI)
+                && (max * max)
+                    .checked_mul(n)
+                    .is_some_and(|total| total <= S::SquareSum::HI)
+        };
+        let largest = |bits: u32| (1_u128 << bits) - 1;
+        assert!(sums_hold(largest(S::MAX_COUNTER_BITS)));
+        assert!(!sums_hold(largest(S::MAX_COUNTER_BITS + 1)));
         assert!(S::Difference::LO <= -S::HI && S::HI <= S::Difference::HI);
         assert_eq!(S::MIN.to_sum().into(), 0);
         assert_eq!(S::MAX.to_sum().into(), S::HI);
@@ -675,6 +708,20 @@ mod tests {
         check_unsigned_moment_bounds::<u16>();
         check_unsigned_moment_bounds::<u32>();
 
+        assert_eq!(
+            [
+                <i8 as MomentWord>::MAX_COUNTER_BITS,
+                <i16 as MomentWord>::MAX_COUNTER_BITS,
+                <i32 as MomentWord>::MAX_COUNTER_BITS,
+                <u8 as MomentWord>::MAX_COUNTER_BITS,
+                <u16 as MomentWord>::MAX_COUNTER_BITS,
+                <u32 as MomentWord>::MAX_COUNTER_BITS,
+            ],
+            [50, 34, 32, 48, 32, 32]
+        );
+        assert_eq!(super::max_counter_bits(64, 32, 128, 62), 32);
+        assert_eq!(super::max_counter_bits(64, 16, 64, 30), 34);
+
         fn same<T>(_: T, _: T) {}
         same::<<i8 as MomentWord>::Sum>(0, 0_i64);
         same::<<i16 as MomentWord>::Sum>(0, 0_i64);
@@ -688,8 +735,11 @@ mod tests {
         same::<<u8 as MomentWord>::SquareSum>(0, 0_u64);
         same::<<u16 as MomentWord>::SquareSum>(0, 0_u64);
         same::<<u32 as MomentWord>::SquareSum>(0, 0_u128);
-        assert_eq!(super::unsigned_square_sum_bits(16), 64);
-        assert_eq!(super::unsigned_square_sum_bits(32), 96);
+        assert_eq!(super::sum_bits(16, 32), 48);
+        assert_eq!(super::square_sum_bits(16, 32), 62);
+        assert_eq!(super::unsigned_sum_bits(16, 32), 48);
+        assert_eq!(super::unsigned_square_sum_bits(16, 32), 64);
+        assert_eq!(super::unsigned_square_sum_bits(32, 32), 96);
     }
 
     #[test]
@@ -818,6 +868,8 @@ mod tests {
         check_word_conversions_and_differences::<u32>("u32");
         assert_eq!(0_i16.power_of_two_cell(), 16);
         assert_eq!(0_u16.power_of_two_cell(), 0);
+        assert_eq!(super::power_of_two_cells(16), 32);
+        assert_eq!(super::unsigned_power_of_two_cells(16), 16);
     }
 
     #[cfg(feature = "nightly")]

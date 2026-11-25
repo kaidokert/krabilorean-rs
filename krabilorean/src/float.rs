@@ -33,7 +33,7 @@
 //!     Some(limit) => limit,
 //!     None => panic!("limit is finite"),
 //! };
-//! let mut extrema = Extrema::<Checked, Finite<f32>>::new();
+//! let mut extrema = Extrema::<Checked, u32, Finite<f32>>::new();
 //! let mut crossings = ThresholdCrossings::<Checked, u32, Finite<f32>>::new(LIMIT);
 //! for reading in [9.7_f32, 9.9, f32::NAN, 9.6, 10.2] {
 //!     let Some(sample) = Finite::new(reading) else { continue };
@@ -51,7 +51,7 @@
 //! ```compile_fail
 //! use krabilorean::online::Extrema;
 //! use krabilorean::policy::Checked;
-//! let _ = Extrema::<Checked, f32>::new();
+//! let _ = Extrema::<Checked, u32, f32>::new();
 //! ```
 //!
 //! and an accumulating family rejects `Finite` floats:
@@ -60,7 +60,7 @@
 //! use krabilorean::float::Finite;
 //! use krabilorean::online::RunningMoments;
 //! use krabilorean::policy::Checked;
-//! let _ = RunningMoments::<Checked, Finite<f32>>::new();
+//! let _ = RunningMoments::<Checked, u32, Finite<f32>>::new();
 //! ```
 
 use crate::sample::SampleValue;
@@ -458,9 +458,9 @@ mod tests {
                 .map(|&x| Finite::new(x).expect("finite"))
                 .collect();
             let limit = Finite::new(threshold).expect("finite");
-            let mut minimum = Minimum::<Checked, Finite<f32>>::new();
-            let mut maximum = Maximum::<Checked, Finite<f32>>::new();
-            let mut extrema = Extrema::<Checked, Finite<f32>>::new();
+            let mut minimum = Minimum::<Checked, u32, Finite<f32>>::new();
+            let mut maximum = Maximum::<Checked, u32, Finite<f32>>::new();
+            let mut extrema = Extrema::<Checked, u32, Finite<f32>>::new();
             let mut crossings = ThresholdCrossings::<Checked, u32, Finite<f32>>::new(limit);
             let mut runs = ThresholdRuns::<Checked, u32, Finite<f32>>::new(limit);
             for &sample in &samples {
@@ -520,9 +520,9 @@ mod tests {
             let limit = Finite::new(f64::from(threshold)).expect("finite");
             for split in [0, 1, samples.len() / 2, samples.len()] {
                 let (left, right) = samples.split_at(split);
-                let mut whole = Extrema::<Checked, Finite<f64>>::new();
-                let mut first = Extrema::<Checked, Finite<f64>>::new();
-                let mut second = Extrema::<Checked, Finite<f64>>::new();
+                let mut whole = Extrema::<Checked, u32, Finite<f64>>::new();
+                let mut first = Extrema::<Checked, u32, Finite<f64>>::new();
+                let mut second = Extrema::<Checked, u32, Finite<f64>>::new();
                 let mut whole_crossings =
                     ThresholdCrossings::<Checked, u32, Finite<f64>>::new(limit);
                 let mut first_crossings =
