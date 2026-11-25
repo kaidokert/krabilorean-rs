@@ -17,9 +17,11 @@ pub use ew_variance::{
 pub use ewma::{EW_MEAN_MAX_ALPHA_SHIFT, EwMean, EwMeanSnapshot, ew_mean_max_fractional_bits};
 pub use extrema::{Extrema, ExtremaSnapshot, Maximum, MaximumSnapshot, Minimum, MinimumSnapshot};
 pub use histogram::{HistogramSnapshot, LinearHistogram};
-pub use moments::{RawMomentsSnapshot, RunningMoments};
+pub use moments::{RawMomentsSnapshot, RunningMoments, raw_moments_hold};
 pub use power_of_two::{
     PowerOfTwoHistogram, PowerOfTwoHistogramSnapshot, power_of_two_buckets_are_valid,
 };
 pub use runs::{ThresholdRuns, ThresholdRunsSnapshot};
-pub use successive_difference::{SuccessiveDifference, SuccessiveDifferenceSnapshot};
+pub use successive_difference::{
+    SuccessiveDifference, SuccessiveDifferenceSnapshot, successive_difference_holds,
+};

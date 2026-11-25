@@ -10,7 +10,7 @@
 //! use krabilorean::online::Extrema;
 //! use krabilorean::policy::Checked;
 //!
-//! let mut extrema = Extrema::<Checked, i16>::new();
+//! let mut extrema = Extrema::<Checked, u32, i16>::new();
 //! for sample in [4_i16, -2, 7, 3] {
 //!     extrema.update(sample)?;
 //! }
