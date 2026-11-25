@@ -69,11 +69,19 @@ c0nst::c0nst! {
     }
 
     impl<C: CounterWord, S: Copy> SuccessiveDifferenceSnapshot<C, S> {
-        /// Returns the mean absolute successive difference when at least one difference exists.
+        /// Returns the mean absolute successive difference as an exact ratio when at least one
+        /// difference exists and the snapshot is complete.
+        ///
+        /// Under [`Saturating`](crate::policy::Saturating) the difference count and the sum
+        /// saturate separately, so once the snapshot is saturated `absolute_sum / differences` is
+        /// no longer the mean of the accepted differences.
         pub c0nst fn mean_absolute(self) -> Option<UnsignedRatio>
         where
             C: [c0nst] CounterWord,
         {
+            if !self.quality.is_complete() {
+                return None;
+            }
             match NonZeroU64::new(self.differences.to_u64()) {
                 Some(denominator) => Some(UnsignedRatio {
                     numerator: self.absolute_sum,
@@ -582,6 +590,7 @@ mod tests {
         assert_eq!(snapshot.differences, 2);
         assert_eq!(snapshot.absolute_sum, 0);
         assert_eq!(snapshot.quality, Quality::Saturated);
+        assert_eq!(snapshot.mean_absolute(), None);
 
         let mut saturating_sum = SuccessiveDifference::<Saturating, u32, S> {
             samples: 2,
@@ -599,6 +608,7 @@ mod tests {
         assert_eq!(snapshot.differences, 2);
         assert_eq!(snapshot.absolute_sum, u64::MAX);
         assert_eq!(snapshot.quality, Quality::Saturated);
+        assert_eq!(snapshot.mean_absolute(), None);
 
         let mut saturating_merge = SuccessiveDifference::<Saturating, u32, S> {
             samples: 2,
@@ -623,6 +633,44 @@ mod tests {
             )),
             Some((3, 2, u64::MAX, S::MIN, Quality::Saturated))
         );
+    }
+
+    #[test]
+    fn u8_stream_fills_at_255_samples_and_254_differences() {
+        let mut checked = SuccessiveDifference::<Checked, u8, u8>::new();
+        let mut saturating = SuccessiveDifference::<Saturating, u8, u8>::new();
+        for step in 0..u8::MAX {
+            let sample = if step % 2 == 0 { 0 } else { u8::MAX };
+            checked.update(sample).expect("within u8 capacity");
+            saturating.update(sample).expect("saturating");
+        }
+        let full = checked;
+        let snapshot = checked.snapshot().expect("defined");
+        assert_eq!(snapshot.samples, u8::MAX);
+        assert_eq!(snapshot.differences, u8::MAX - 1);
+        assert_eq!(snapshot.quality, Quality::Complete);
+        assert_eq!(
+            snapshot.mean_absolute(),
+            Some(UnsignedRatio {
+                numerator: u64::from(u8::MAX) * u64::from(u8::MAX - 1),
+                denominator: NonZeroU64::new(u64::from(u8::MAX - 1)).expect("non-zero"),
+            })
+        );
+
+        assert_eq!(checked.update(u8::MAX), Err(Error::Overflow));
+        assert_eq!(checked, full);
+
+        saturating.update(u8::MAX).expect("saturating");
+        saturating.update(0).expect("saturating");
+        let saturated = saturating.snapshot().expect("defined");
+        assert_eq!(saturated.samples, u8::MAX);
+        assert_eq!(saturated.differences, u8::MAX);
+        assert_eq!(
+            saturated.absolute_sum,
+            u64::from(u8::MAX) * (u64::from(u8::MAX) + 1)
+        );
+        assert_eq!(saturated.quality, Quality::Saturated);
+        assert_eq!(saturated.mean_absolute(), None);
     }
 
     #[test]

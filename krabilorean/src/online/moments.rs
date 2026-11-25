@@ -74,11 +74,11 @@ const _: () = assert!(unsigned_variance_numerator_bits(33, 32) > u128::BITS);
 /// Cumulative count, sum, and sum of squares.
 ///
 /// `C` is the counter word and `S` is the sample word. The sum is [`MomentWord::Sum`] and the
-/// square sum [`MomentWord::SquareSum`], each proven to hold `C::MAX` samples: `i64` and `u64` at
-/// `i8` and `i16`, `i64` and `u128` at `i32`, `u64` and `u64` at `u8` and `u16`, and `u64` and
-/// `u128` at `u32`. `mean` is the word's [`MomentWord::Mean`]: a
-/// [`SignedRatio`](crate::arithmetic::SignedRatio) for a signed word and an
-/// [`UnsignedRatio`](crate::arithmetic::UnsignedRatio) for an unsigned one.
+/// square sum [`MomentWord::SquareSum`], each proven to hold `C::MAX` samples when
+/// [`raw_moments_hold`] accepts `C`: `i64` and `u64` at `i8` and `i16`, `i64` and `u128` at
+/// `i32`, `u64` and `u64` at `u8` and `u16`, and `u64` and `u128` at `u32`. `mean` is the word's
+/// [`MomentWord::Mean`]: a [`SignedRatio`](crate::arithmetic::SignedRatio) for a signed word and
+/// an [`UnsignedRatio`](crate::arithmetic::UnsignedRatio) for an unsigned one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawMomentsSnapshot<C: CounterWord, S: MomentWord> {
     /// Accepted sample count.
