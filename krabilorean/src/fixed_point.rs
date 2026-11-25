@@ -164,9 +164,7 @@ const fn divide_nearest_ties_away(magnitude: u64, denominator: NonZeroU64) -> u6
     quotient + ((remainder >= divisor - remainder) as u64)
 }
 
-/// Raw-unit shift between a snapshot's `fractional_bits` (which already include the word's own)
-/// and the word's raw units. A snapshot with fewer fractional bits than the word came from a
-/// different word.
+/// Raw-unit shift between a snapshot's `fractional_bits` and `S::FRACTIONAL_BITS`.
 const fn raw_shift<S: SampleWord>(fractional_bits: u32) -> Result<u32, Error> {
     match fractional_bits.checked_sub(S::FRACTIONAL_BITS) {
         Some(shift) => Ok(shift),
@@ -204,8 +202,8 @@ c0nst::c0nst! {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Overflow`] for a hand-built ratio outside the word. Neither ratio type can
-    /// hold a zero denominator.
+    /// Returns [`Error::Overflow`] when the rounded raw value of a hand-built ratio does not fit
+    /// the word. Neither ratio type can hold a zero denominator.
     pub c0nst fn mean_nearest<S: [c0nst] FixedPointWord>(mean: S::Mean) -> Result<S, Error>
     where
         S::Mean: [c0nst] sealed::MeanRatio,
@@ -263,8 +261,8 @@ c0nst::c0nst! {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConfiguration`] if the snapshot has fewer fractional bits than the
-    /// word (from a different word), and [`Error::Overflow`] if the rounded mean does not fit.
+    /// Returns [`Error::InvalidConfiguration`] when `snapshot.fractional_bits < S::FRACTIONAL_BITS`,
+    /// and [`Error::Overflow`] when the rounded mean does not fit `S`.
     #[allow(clippy::question_mark)]
     pub c0nst fn ew_mean_nearest<C: CounterWord, S: [c0nst] FixedPointWord>(
         snapshot: &EwMeanSnapshot<C>,
@@ -293,13 +291,13 @@ c0nst::c0nst! {
     /// rounded down.
     ///
     /// The variance has twice the snapshot's `fractional_bits`, so
-    /// `floor(sqrt(variance_q) / 2^shift) = isqrt(variance_q) >> shift`, where `shift` is the
-    /// snapshot's fractional bits beyond the word's own.
+    /// `floor(sqrt(variance_q) / 2^shift) = isqrt(variance_q) >> shift`, where `shift` is
+    /// `snapshot.fractional_bits - S::FRACTIONAL_BITS`.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidConfiguration`] for a snapshot from a word with fewer fractional
-    /// bits, and [`Error::Overflow`] if the result does not fit the magnitude type.
+    /// Returns [`Error::InvalidConfiguration`] when `snapshot.fractional_bits < S::FRACTIONAL_BITS`,
+    /// and [`Error::Overflow`] when the result does not fit the magnitude type.
     #[allow(clippy::question_mark)]
     pub c0nst fn ew_standard_deviation_floor<C: CounterWord, S: [c0nst] FixedPointWord>(
         snapshot: &EwVarianceSnapshot<C>,

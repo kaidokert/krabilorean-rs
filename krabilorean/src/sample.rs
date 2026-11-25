@@ -1,13 +1,13 @@
-//! Sample words: the integer types a statistic can consume, with their wider arithmetic types and
-//! the width-dependent limits proven for each.
+//! Sample words: the integer and fixed-point types a statistic can consume, with their wider
+//! arithmetic types and the width-dependent limits proven for each.
 //!
 //! The traits are split by what a family needs:
 //!
 //! - [`SampleValue`] holds the order and extremes (`MIN`, `MAX`, `ZERO`) that comparison-only
 //!   families need. Every [`SampleWord`] implements it, as do the NaN-free floats
 //!   [`Finite<f32>`](crate::float::Finite) and `Finite<f64>`.
-//! - [`SampleWord`] adds the width facts every integer sample family may use: `BITS`, exact `i64`
-//!   conversions, the Q-format headroom, and the exact signed difference type
+//! - [`SampleWord`] adds the width facts every integer or fixed-point sample family may use:
+//!   `BITS`, exact `i64` conversions, the Q-format headroom, and the exact signed difference type
 //!   [`SampleWord::Difference`].
 //! - [`MomentWord`] adds the raw-moment sum and square-sum types, signed or unsigned with the
 //!   word, each proven to hold as many samples as a counter of [`MomentWord::MAX_COUNTER_BITS`]
@@ -636,10 +636,7 @@ unsigned_histogram_word!(u32);
 /// Every operation delegates to the integer word `$bits` of the same width and signedness, so the
 /// accumulator types, bounds, and power-of-two partition match `$bits`.
 macro_rules! fixed_sample_word {
-    (
-        $fixed:ident, $bits:ty, $leq:ident, $prefix:literal, [$($frac:literal)*],
-        $difference:ty, $sum:ty, $square_sum:ty, $mean:ty
-    ) => {
+    ($fixed:ident, $bits:ty, $leq:ident, $prefix:literal, [$($frac:literal)*]) => {
         impl<Frac: const_fixed::types::extra::$leq> crate::sealed::IntegerName
             for const_fixed::$fixed<Frac>
         {
@@ -711,10 +708,10 @@ macro_rules! fixed_sample_word {
                     }
                 }
 
-                type Difference = $difference;
+                type Difference = <$bits as SampleWord>::Difference;
 
                 #[inline(always)]
-                fn difference(self, other: Self) -> $difference {
+                fn difference(self, other: Self) -> Self::Difference {
                     <$bits as SampleWord>::difference(self.to_bits(), other.to_bits())
                 }
             }
@@ -722,16 +719,16 @@ macro_rules! fixed_sample_word {
             c0nst impl<Frac: const_fixed::types::extra::$leq> MomentWord
                 for const_fixed::$fixed<Frac>
             {
-                type Sum = $sum;
-                type SquareSum = $square_sum;
-                type Mean = $mean;
+                type Sum = <$bits as MomentWord>::Sum;
+                type SquareSum = <$bits as MomentWord>::SquareSum;
+                type Mean = <$bits as MomentWord>::Mean;
                 const MAX_COUNTER_BITS: u32 = <$bits as MomentWord>::MAX_COUNTER_BITS;
-                const ZERO_SUM: $sum = 0;
-                const ZERO_SQUARE_SUM: $square_sum = 0;
+                const ZERO_SUM: Self::Sum = <$bits as MomentWord>::ZERO_SUM;
+                const ZERO_SQUARE_SUM: Self::SquareSum = <$bits as MomentWord>::ZERO_SQUARE_SUM;
 
                 #[inline(always)]
-                fn to_sum(self) -> $sum {
-                    self.to_bits() as $sum
+                fn to_sum(self) -> Self::Sum {
+                    <$bits as MomentWord>::to_sum(self.to_bits())
                 }
             }
 
@@ -787,71 +784,35 @@ macro_rules! fixed_sample_word {
     };
 }
 
-fixed_sample_word!(
-    FixedI8,
-    i8,
-    LeEqU8,
-    "i8q",
-    [0 1 2 3 4 5 6 7 8],
-    i16,
-    i64,
-    u64,
-    SignedRatio
-);
+fixed_sample_word!(FixedI8, i8, LeEqU8, "i8q", [0 1 2 3 4 5 6 7 8]);
 fixed_sample_word!(
     FixedI16,
     i16,
     LeEqU16,
     "i16q",
-    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16],
-    i32,
-    i64,
-    u64,
-    SignedRatio
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
 );
 fixed_sample_word!(
     FixedI32,
     i32,
     LeEqU32,
     "i32q",
-    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32],
-    i64,
-    i64,
-    u128,
-    SignedRatio
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32]
 );
-fixed_sample_word!(
-    FixedU8,
-    u8,
-    LeEqU8,
-    "u8q",
-    [0 1 2 3 4 5 6 7 8],
-    i16,
-    u64,
-    u64,
-    UnsignedRatio
-);
+fixed_sample_word!(FixedU8, u8, LeEqU8, "u8q", [0 1 2 3 4 5 6 7 8]);
 fixed_sample_word!(
     FixedU16,
     u16,
     LeEqU16,
     "u16q",
-    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16],
-    i32,
-    u64,
-    u64,
-    UnsignedRatio
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
 );
 fixed_sample_word!(
     FixedU32,
     u32,
     LeEqU32,
     "u32q",
-    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32],
-    i64,
-    u64,
-    u128,
-    UnsignedRatio
+    [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32]
 );
 
 #[cfg(test)]
