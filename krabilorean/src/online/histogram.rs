@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use super::{MergeSlot, Slot};
 use crate::distribution::{Bucket, BucketView, ExactBucketView};
 use crate::histogram::{
     HistogramBounds, HistogramClass, HistogramMode, bins_are_valid, classify, linear_bin_bounds,
@@ -322,6 +323,54 @@ c0nst::c0nst! {
             self.above = delta.above;
             self.samples = delta.samples;
             self.quality = delta.quality;
+        }
+    }
+
+    c0nst impl<
+        const BINS: usize,
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] HistogramWord,
+    > Slot<S> for LinearHistogram<BINS, O, C, S>
+    {
+        type Delta = HistogramDelta<C>;
+        type Snapshot<'a>
+            = HistogramSnapshot<'a, BINS, C, S>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            LinearHistogram::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            LinearHistogram::reset(self);
+        }
+    }
+
+    c0nst impl<
+        const BINS: usize,
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] HistogramWord,
+    > MergeSlot<S> for LinearHistogram<BINS, O, C, S>
+    {
+        type MergeDelta = HistogramMergeDelta<BINS, C>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_merge(delta);
         }
     }
 }

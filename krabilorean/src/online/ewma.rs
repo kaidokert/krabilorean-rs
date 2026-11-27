@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use super::Slot;
 use crate::arithmetic::RoundingPolicy;
 use crate::policy::{CounterWord, OverflowPolicy};
 use crate::sample::SampleWord;
@@ -209,6 +210,38 @@ c0nst::c0nst! {
             self.samples = delta.samples;
             self.mean_q = delta.mean_q;
             self.quality = delta.quality;
+        }
+    }
+
+    c0nst impl<
+        const ALPHA_SHIFT: u32,
+        const FRACTIONAL_BITS: u32,
+        R: [c0nst] RoundingPolicy,
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] SampleWord,
+    > Slot<S> for EwMean<ALPHA_SHIFT, FRACTIONAL_BITS, R, O, C, S>
+    {
+        type Delta = EwMeanDelta<C>;
+        type Snapshot<'a>
+            = Option<EwMeanSnapshot<C>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            EwMean::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            EwMean::reset(self);
         }
     }
 }

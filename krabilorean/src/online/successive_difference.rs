@@ -3,6 +3,7 @@
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
 
+use super::{MergeSlot, Slot};
 use crate::arithmetic::UnsignedRatio;
 use crate::policy::{Arithmetic, CounterWord, OverflowPolicy};
 use crate::sample::SampleWord;
@@ -126,7 +127,7 @@ pub struct SuccessiveDifference<O, C, S> {
 
 /// Prospective successive-difference state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SuccessiveDifferenceDelta<C, S> {
+pub(crate) struct SuccessiveDifferenceDelta<C, S> {
     samples: C,
     differences: C,
     absolute_sum: u64,
@@ -346,6 +347,46 @@ c0nst::c0nst! {
                         || absolute_sum.saturated,
                 ),
             })
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleWord> Slot<S>
+        for SuccessiveDifference<O, C, S>
+    {
+        type Delta = SuccessiveDifferenceDelta<C, S>;
+        type Snapshot<'a>
+            = Option<SuccessiveDifferenceSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare_word(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit_word(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            SuccessiveDifference::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            SuccessiveDifference::reset(self);
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleWord>
+        MergeSlot<S> for SuccessiveDifference<O, C, S>
+    {
+        type MergeDelta = SuccessiveDifferenceDelta<C, S>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge_word(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_word(delta);
         }
     }
 }

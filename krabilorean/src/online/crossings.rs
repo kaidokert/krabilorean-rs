@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use super::{MergeSlot, Slot};
 use crate::policy::{Arithmetic, CounterWord, OverflowPolicy};
 use crate::sample::SampleValue;
 use crate::{Error, Quality};
@@ -44,7 +45,7 @@ pub struct ThresholdCrossings<O, C, S> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ThresholdCrossingsDelta<C> {
+pub(crate) struct ThresholdCrossingsDelta<C> {
     samples: C,
     crossings: C,
     rising: C,
@@ -329,6 +330,46 @@ c0nst::c0nst! {
                         || falling.saturated,
                 ),
             })
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
+        for ThresholdCrossings<O, C, S>
+    {
+        type Delta = ThresholdCrossingsDelta<C>;
+        type Snapshot<'a>
+            = Option<ThresholdCrossingsSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare_word(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit_word(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            ThresholdCrossings::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            ThresholdCrossings::reset(self);
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue>
+        MergeSlot<S> for ThresholdCrossings<O, C, S>
+    {
+        type MergeDelta = ThresholdCrossingsDelta<C>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge_word(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_word(delta);
         }
     }
 }
