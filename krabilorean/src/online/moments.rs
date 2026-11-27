@@ -128,9 +128,8 @@ pub struct RunningMoments<O, C, S: MomentWord> {
 }
 
 /// Prospective raw-moment state.
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RawMomentsDelta<C, S: MomentWord> {
+pub(crate) struct RawMomentsDelta<C, S: MomentWord> {
     samples: C,
     sum: S::Sum,
     sum_of_squares: S::SquareSum,
@@ -310,8 +309,6 @@ c0nst::c0nst! {
             self.commit(delta);
         }
     }
-
-    c0nst impl<O, C, S: MomentWord> crate::sealed::OnlineSlot for RunningMoments<O, C, S> {}
 
     c0nst impl<O, C, S> Slot<S> for RunningMoments<O, C, S>
     where

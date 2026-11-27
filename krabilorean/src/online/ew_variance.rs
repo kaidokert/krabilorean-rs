@@ -59,9 +59,8 @@ pub struct EwVariance<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, 
     policies: Policies<R, O, S>,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EwVarianceDelta<C> {
+pub(crate) struct EwVarianceDelta<C> {
     samples: C,
     mean_q: i64,
     variance_q: u128,
@@ -240,11 +239,6 @@ c0nst::c0nst! {
             self.variance_q = delta.variance_q;
             self.quality = delta.quality;
         }
-    }
-
-    c0nst impl<const A: u32, const F: u32, R, O, C, S> crate::sealed::OnlineSlot
-        for EwVariance<A, F, R, O, C, S>
-    {
     }
 
     c0nst impl<

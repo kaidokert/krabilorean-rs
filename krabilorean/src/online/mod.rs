@@ -35,12 +35,8 @@ use crate::policy::{CounterWord, OverflowPolicy};
 use crate::sample::{HistogramWord, MomentWord, SampleValue, SampleWord};
 
 c0nst::c0nst! {
-    /// Internal capability implemented by every selectable online feature.
-    ///
-    /// This trait is public only because its associated snapshot types occur in the public
-    /// composed profile. It is not a stability promise for third-party implementations.
-    #[doc(hidden)]
-    pub c0nst trait Slot<S>: [c0nst] crate::sealed::OnlineSlot {
+    /// Crate-internal capability implemented by every selectable online feature.
+    pub(crate) c0nst trait Slot<S> {
         /// A prospective constant-sized update.
         type Delta: Copy;
         /// Snapshot produced by the slot.
@@ -58,15 +54,13 @@ c0nst::c0nst! {
         fn reset(&mut self);
     }
 
-    /// Internal bounded concatenation capability for online summaries.
+    /// Crate-internal bounded concatenation capability for online summaries.
     ///
-    /// This trait is public only because it constrains the public composed profile.
     /// Implementations represent `self` followed by `newer`; sequence-sensitive slots therefore
     /// retain boundary state. Exact slots reproduce raw-stream concatenation. Quantized
     /// exponentially weighted estimators do not implement this trait because per-sample rounding
     /// makes their sufficient state path-dependent.
-    #[doc(hidden)]
-    pub c0nst trait MergeSlot<S>: [c0nst] Slot<S> {
+    pub(crate) c0nst trait MergeSlot<S>: [c0nst] Slot<S> {
         /// A prospective constant- or capacity-bounded merge.
         type MergeDelta: Copy;
 
@@ -108,8 +102,6 @@ impl<P: Copy> EmptyOnlineProfile<P> {
 }
 
 c0nst::c0nst! {
-    c0nst impl crate::sealed::OnlineSlot for Disabled {}
-
     c0nst impl<S: Copy> Slot<S> for Disabled {
         type Delta = ();
         type Snapshot<'a> = ();
@@ -628,6 +620,7 @@ pub struct OnlineProcessor<
 }
 
 c0nst::c0nst! {
+    #[allow(private_bounds)]
     impl<
         S: Copy,
         E: Slot<S>,
@@ -642,8 +635,13 @@ c0nst::c0nst! {
         /// Updates every selected feature transactionally.
         ///
         /// Every prospective update is calculated before any slot is committed, so an error leaves
-        /// the entire composed processor bit-identical.
-        #[allow(clippy::question_mark)]
+        /// the entire composed processor bit-identical. The two-phase slot trait is crate-private
+        /// so external callers cannot split prepare and commit across slots:
+        ///
+        /// ```compile_fail,E0603
+        /// use krabilorean::online::Slot;
+        /// ```
+        #[allow(clippy::question_mark, private_bounds)]
         pub c0nst fn update(&mut self, sample: S) -> Result<(), Error>
         where
             E: [c0nst] Slot<S>,
@@ -694,6 +692,7 @@ c0nst::c0nst! {
         }
 
         /// Borrows or copies each selected feature's result.
+        #[allow(private_bounds)]
         pub c0nst fn snapshot(&self) -> OnlineSnapshot<'_, S, E, W, M, D, H, C, R>
         where
             E: [c0nst] Slot<S>,
@@ -716,6 +715,7 @@ c0nst::c0nst! {
         }
 
         /// Resets every selected feature.
+        #[allow(private_bounds)]
         pub c0nst fn reset(&mut self)
         where
             E: [c0nst] Slot<S>,
@@ -736,6 +736,7 @@ c0nst::c0nst! {
         }
     }
 
+    #[allow(private_bounds)]
     impl<
         S: Copy,
         E: MergeSlot<S>,
@@ -767,7 +768,7 @@ c0nst::c0nst! {
         /// let right = left;
         /// left.merge(&right);
         /// ```
-        #[allow(clippy::question_mark)]
+        #[allow(clippy::question_mark, private_bounds)]
         pub c0nst fn merge(&mut self, newer: &Self) -> Result<(), Error>
         where
             E: [c0nst] MergeSlot<S>,
@@ -846,6 +847,7 @@ c0nst::c0nst! {
     {
     }
 
+    #[allow(private_bounds)]
     c0nst impl<
         S: Copy,
         E: [c0nst] MergeSlot<S> + Copy,
@@ -874,6 +876,7 @@ c0nst::c0nst! {
 }
 
 /// Output of a composed online processor over the sample word `S`.
+#[allow(private_bounds, private_interfaces)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OnlineSnapshot<
     'a,
@@ -920,8 +923,6 @@ mod tests {
     struct Failing;
 
     c0nst::c0nst! {
-        c0nst impl crate::sealed::OnlineSlot for Failing {}
-
         c0nst impl<S: Copy> Slot<S> for Failing {
             type Delta = ();
             type Snapshot<'a> = ();
@@ -990,43 +991,146 @@ mod tests {
     #[test]
     fn every_slot_position_fails_transactionally_on_update_and_merge() {
         macro_rules! check_slot_failure {
-            ($e:expr, $w:expr, $m:expr, $d:expr, $h:expr, $c:expr, $r:expr) => {{
+            (
+                ($e1:expr, $w1:expr, $m1:expr, $d1:expr, $h1:expr, $c1:expr, $r1:expr),
+                ($e2:expr, $w2:expr, $m2:expr, $d2:expr, $h2:expr, $c2:expr, $r2:expr)
+            ) => {{
                 let mut processor = OnlineProcessor::<i32, _, _, _, _, _, _, _> {
-                    extrema: $e,
-                    ew_mean: $w,
-                    moments: $m,
-                    difference: $d,
-                    histogram: $h,
-                    crossings: $c,
-                    runs: $r,
+                    extrema: $e1,
+                    ew_mean: $w1,
+                    moments: $m1,
+                    difference: $d1,
+                    histogram: $h1,
+                    crossings: $c1,
+                    runs: $r1,
+                    word: PhantomData,
+                };
+                let newer = OnlineProcessor::<i32, _, _, _, _, _, _, _> {
+                    extrema: $e2,
+                    ew_mean: $w2,
+                    moments: $m2,
+                    difference: $d2,
+                    histogram: $h2,
+                    crossings: $c2,
+                    runs: $r2,
                     word: PhantomData,
                 };
                 let before = processor;
                 assert_eq!(processor.update(100_000), Err(Error::Overflow));
                 assert_eq!(processor, before);
-                assert_eq!(processor.merge(&before), Err(Error::Overflow));
+                assert_eq!(processor.merge(&newer), Err(Error::Overflow));
                 assert_eq!(processor, before);
             }};
         }
 
-        let ext = Extrema::<Checked, u32, i32>::new();
-        let cross = ThresholdCrossings::<Checked, u32, i32>::new(70_000);
+        let mut ext_left = Extrema::<Checked, u32, i32>::new();
+        assert_eq!(ext_left.update(10), Ok(()));
+        let mut ext_right = Extrema::<Checked, u32, i32>::new();
+        assert_eq!(ext_right.update(90_000), Ok(()));
+        let mut cross_left = ThresholdCrossings::<Checked, u32, i32>::new(70_000);
+        assert_eq!(cross_left.update(10), Ok(()));
+        let mut cross_right = ThresholdCrossings::<Checked, u32, i32>::new(70_000);
+        assert_eq!(cross_right.update(90_000), Ok(()));
+        assert_ne!(ext_left, ext_right);
+        assert_ne!(cross_left, cross_right);
+
         let mut failing = Failing;
         <Failing as Slot<i32>>::commit(&mut failing, ());
         <Failing as Slot<i32>>::snapshot(&failing);
         <Failing as Slot<i32>>::reset(&mut failing);
         <Failing as MergeSlot<i32>>::commit_merge(&mut failing, ());
         check_slot_failure!(
-            Failing, Disabled, Disabled, Disabled, Disabled, cross, Disabled
+            (
+                Failing, Disabled, Disabled, Disabled, Disabled, cross_left, Disabled
+            ),
+            (
+                Failing,
+                Disabled,
+                Disabled,
+                Disabled,
+                Disabled,
+                cross_right,
+                Disabled
+            )
         );
-        check_slot_failure!(ext, Failing, Disabled, Disabled, Disabled, cross, Disabled);
-        check_slot_failure!(ext, Disabled, Failing, Disabled, Disabled, cross, Disabled);
-        check_slot_failure!(ext, Disabled, Disabled, Failing, Disabled, cross, Disabled);
-        check_slot_failure!(ext, Disabled, Disabled, Disabled, Failing, cross, Disabled);
         check_slot_failure!(
-            ext, Disabled, Disabled, Disabled, Disabled, Failing, Disabled
+            (
+                ext_left, Failing, Disabled, Disabled, Disabled, cross_left, Disabled
+            ),
+            (
+                ext_right,
+                Failing,
+                Disabled,
+                Disabled,
+                Disabled,
+                cross_right,
+                Disabled
+            )
         );
-        check_slot_failure!(ext, Disabled, Disabled, Disabled, Disabled, cross, Failing);
+        check_slot_failure!(
+            (
+                ext_left, Disabled, Failing, Disabled, Disabled, cross_left, Disabled
+            ),
+            (
+                ext_right,
+                Disabled,
+                Failing,
+                Disabled,
+                Disabled,
+                cross_right,
+                Disabled
+            )
+        );
+        check_slot_failure!(
+            (
+                ext_left, Disabled, Disabled, Failing, Disabled, cross_left, Disabled
+            ),
+            (
+                ext_right,
+                Disabled,
+                Disabled,
+                Failing,
+                Disabled,
+                cross_right,
+                Disabled
+            )
+        );
+        check_slot_failure!(
+            (
+                ext_left, Disabled, Disabled, Disabled, Failing, cross_left, Disabled
+            ),
+            (
+                ext_right,
+                Disabled,
+                Disabled,
+                Disabled,
+                Failing,
+                cross_right,
+                Disabled
+            )
+        );
+        check_slot_failure!(
+            (
+                ext_left, Disabled, Disabled, Disabled, Disabled, Failing, Disabled
+            ),
+            (
+                ext_right, Disabled, Disabled, Disabled, Disabled, Failing, Disabled
+            )
+        );
+        check_slot_failure!(
+            (
+                ext_left, Disabled, Disabled, Disabled, Disabled, cross_left, Failing
+            ),
+            (
+                ext_right,
+                Disabled,
+                Disabled,
+                Disabled,
+                Disabled,
+                cross_right,
+                Failing
+            )
+        );
     }
 
     #[test]
@@ -1124,16 +1228,29 @@ mod tests {
         assert!(max_var.snapshot().extrema.is_none());
         assert!(max_var.snapshot().ew_mean.is_none());
 
-        let custom_ew = OnlineBuilder::<i16>::new()
+        let mut custom_ew = OnlineBuilder::<i16>::new()
             .ew_mean_with::<2, 8, NearestTiesAway, Checked, u16>()
             .expect("valid")
             .build();
-        let custom_var = OnlineBuilder::<i16>::new()
+        let mut custom_var = OnlineBuilder::<i16>::new()
             .ew_variance_with::<2, 8, NearestTiesAway, Checked, u16>()
             .expect("valid")
             .build();
         assert!(custom_ew.snapshot().ew_mean.is_none());
         assert!(custom_var.snapshot().ew_mean.is_none());
+        custom_ew.update(12).expect("update");
+        custom_var.update(12).expect("update");
+        let ew_snap = custom_ew.snapshot().ew_mean.expect("defined");
+        let var_snap = custom_var.snapshot().ew_mean.expect("defined");
+        assert_eq!((ew_snap.mean_q, ew_snap.fractional_bits), (12 << 8, 8));
+        assert_eq!(
+            (
+                var_snap.mean_q,
+                var_snap.variance_q,
+                var_snap.fractional_bits
+            ),
+            (12 << 8, 0, 8)
+        );
     }
 
     #[cfg(feature = "nightly")]

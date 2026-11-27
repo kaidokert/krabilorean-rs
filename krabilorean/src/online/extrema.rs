@@ -31,9 +31,8 @@ pub struct Minimum<O, C, S> {
 }
 
 /// Prospective minimum state.
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MinimumDelta<C, S> {
+pub(crate) struct MinimumDelta<C, S> {
     samples: C,
     value: S,
     quality: Quality,
@@ -212,9 +211,8 @@ pub struct Maximum<O, C, S> {
 }
 
 /// Prospective maximum state.
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MaximumDelta<C, S> {
+pub(crate) struct MaximumDelta<C, S> {
     samples: C,
     value: S,
     quality: Quality,
@@ -396,9 +394,8 @@ pub struct Extrema<O, C, S> {
 }
 
 /// Prospective extrema state.
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ExtremaDelta<C, S> {
+pub(crate) struct ExtremaDelta<C, S> {
     samples: C,
     minimum: S,
     maximum: S,
@@ -574,8 +571,6 @@ c0nst::c0nst! {
         }
     }
 
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Minimum<O, C, S> {}
-
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
         for Minimum<O, C, S>
     {
@@ -616,8 +611,6 @@ c0nst::c0nst! {
         }
     }
 
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Maximum<O, C, S> {}
-
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
         for Maximum<O, C, S>
     {
@@ -657,8 +650,6 @@ c0nst::c0nst! {
             self.commit_word(delta);
         }
     }
-
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Extrema<O, C, S> {}
 
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
         for Extrema<O, C, S>

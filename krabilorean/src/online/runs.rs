@@ -38,9 +38,8 @@ pub struct ThresholdRuns<O, C, S> {
     policy: PhantomData<fn() -> O>,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ThresholdRunsDelta<C> {
+pub(crate) struct ThresholdRunsDelta<C> {
     samples: C,
     prefix_run: C,
     current_run: C,
@@ -295,8 +294,6 @@ c0nst::c0nst! {
             })
         }
     }
-
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for ThresholdRuns<O, C, S> {}
 
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
         for ThresholdRuns<O, C, S>

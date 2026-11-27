@@ -84,9 +84,6 @@ mod sealed {
         /// Seal of the public `ExactBucketView`.
         pub c0nst trait ExactBucketView {}
 
-        /// Seal of `online::Slot`.
-        pub c0nst trait OnlineSlot {}
-
         /// Seal of `online::MergeableOnline`.
         pub c0nst trait MergeableOnline {}
 

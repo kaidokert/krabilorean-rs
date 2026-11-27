@@ -102,17 +102,15 @@ pub(crate) enum HistogramCounter<C> {
     Above(C),
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HistogramDelta<C> {
+pub(crate) struct HistogramDelta<C> {
     counter: HistogramCounter<C>,
     samples: C,
     quality: Quality,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HistogramMergeDelta<const BINS: usize, C> {
+pub(crate) struct HistogramMergeDelta<const BINS: usize, C> {
     counts: [C; BINS],
     below: C,
     above: C,
@@ -326,11 +324,6 @@ c0nst::c0nst! {
             self.samples = delta.samples;
             self.quality = delta.quality;
         }
-    }
-
-    c0nst impl<const BINS: usize, O, C, S> crate::sealed::OnlineSlot
-        for LinearHistogram<BINS, O, C, S>
-    {
     }
 
     c0nst impl<

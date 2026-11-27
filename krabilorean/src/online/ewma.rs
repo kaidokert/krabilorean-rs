@@ -51,9 +51,8 @@ pub struct EwMean<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, C, S
     policies: Policies<R, O, S>,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EwMeanDelta<C> {
+pub(crate) struct EwMeanDelta<C> {
     samples: C,
     mean_q: i64,
     quality: Quality,
@@ -212,11 +211,6 @@ c0nst::c0nst! {
             self.mean_q = delta.mean_q;
             self.quality = delta.quality;
         }
-    }
-
-    c0nst impl<const ALPHA_SHIFT: u32, const FRACTIONAL_BITS: u32, R, O, C, S>
-        crate::sealed::OnlineSlot for EwMean<ALPHA_SHIFT, FRACTIONAL_BITS, R, O, C, S>
-    {
     }
 
     c0nst impl<

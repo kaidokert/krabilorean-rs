@@ -117,18 +117,16 @@ pub struct PowerOfTwoHistogram<const N: usize, O, C, S> {
     policy: PhantomData<fn() -> (O, S)>,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PowerOfTwoDelta<C> {
+pub(crate) struct PowerOfTwoDelta<C> {
     index: usize,
     count: C,
     samples: C,
     quality: Quality,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PowerOfTwoMergeDelta<const N: usize, C> {
+pub(crate) struct PowerOfTwoMergeDelta<const N: usize, C> {
     counts: [C; N],
     samples: C,
     quality: Quality,
@@ -309,11 +307,6 @@ c0nst::c0nst! {
             self.samples = delta.samples;
             self.quality = delta.quality;
         }
-    }
-
-    c0nst impl<const N: usize, O, C, S> crate::sealed::OnlineSlot
-        for PowerOfTwoHistogram<N, O, C, S>
-    {
     }
 
     c0nst impl<

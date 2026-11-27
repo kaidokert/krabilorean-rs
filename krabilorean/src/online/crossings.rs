@@ -44,9 +44,8 @@ pub struct ThresholdCrossings<O, C, S> {
     policy: PhantomData<fn() -> O>,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ThresholdCrossingsDelta<C> {
+pub(crate) struct ThresholdCrossingsDelta<C> {
     samples: C,
     crossings: C,
     rising: C,
@@ -333,8 +332,6 @@ c0nst::c0nst! {
             })
         }
     }
-
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for ThresholdCrossings<O, C, S> {}
 
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
         for ThresholdCrossings<O, C, S>

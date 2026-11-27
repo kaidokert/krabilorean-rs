@@ -126,9 +126,8 @@ pub struct SuccessiveDifference<O, C, S> {
 }
 
 /// Prospective successive-difference state.
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SuccessiveDifferenceDelta<C, S> {
+pub(crate) struct SuccessiveDifferenceDelta<C, S> {
     samples: C,
     differences: C,
     absolute_sum: u64,
@@ -350,8 +349,6 @@ c0nst::c0nst! {
             })
         }
     }
-
-    c0nst impl<O, C, S> crate::sealed::OnlineSlot for SuccessiveDifference<O, C, S> {}
 
     c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleWord> Slot<S>
         for SuccessiveDifference<O, C, S>
