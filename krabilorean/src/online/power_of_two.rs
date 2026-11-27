@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use super::{MergeSlot, Slot};
 use crate::distribution::{Bucket, BucketView, ExactBucketView, ValueBounds};
 use crate::histogram::HistogramBounds;
 use crate::policy::{Checked, CounterWord, OverflowPolicy};
@@ -116,16 +117,18 @@ pub struct PowerOfTwoHistogram<const N: usize, O, C, S> {
     policy: PhantomData<fn() -> (O, S)>,
 }
 
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PowerOfTwoDelta<C> {
+pub struct PowerOfTwoDelta<C> {
     index: usize,
     count: C,
     samples: C,
     quality: Quality,
 }
 
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PowerOfTwoMergeDelta<const N: usize, C> {
+pub struct PowerOfTwoMergeDelta<const N: usize, C> {
     counts: [C; N],
     samples: C,
     quality: Quality,
@@ -305,6 +308,59 @@ c0nst::c0nst! {
             self.counts = delta.counts;
             self.samples = delta.samples;
             self.quality = delta.quality;
+        }
+    }
+
+    c0nst impl<const N: usize, O, C, S> crate::sealed::OnlineSlot
+        for PowerOfTwoHistogram<N, O, C, S>
+    {
+    }
+
+    c0nst impl<
+        const N: usize,
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] HistogramWord,
+    > Slot<S> for PowerOfTwoHistogram<N, O, C, S>
+    {
+        type Delta = PowerOfTwoDelta<C>;
+        type Snapshot<'a>
+            = PowerOfTwoHistogramSnapshot<'a, N, C, S>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            PowerOfTwoHistogram::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            PowerOfTwoHistogram::reset(self);
+        }
+    }
+
+    c0nst impl<
+        const N: usize,
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] HistogramWord,
+    > MergeSlot<S> for PowerOfTwoHistogram<N, O, C, S>
+    {
+        type MergeDelta = PowerOfTwoMergeDelta<N, C>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_merge(delta);
         }
     }
 }

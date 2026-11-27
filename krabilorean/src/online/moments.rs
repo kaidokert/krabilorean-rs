@@ -3,6 +3,7 @@
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
 
+use super::{MergeSlot, Slot};
 use crate::arithmetic::UnsignedWideRatio;
 use crate::policy::{Accumulator, CounterWord, OverflowPolicy};
 use crate::sample::{
@@ -127,8 +128,9 @@ pub struct RunningMoments<O, C, S: MomentWord> {
 }
 
 /// Prospective raw-moment state.
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RawMomentsDelta<C, S: MomentWord> {
+pub struct RawMomentsDelta<C, S: MomentWord> {
     samples: C,
     sum: S::Sum,
     sum_of_squares: S::SquareSum,
@@ -306,6 +308,58 @@ c0nst::c0nst! {
 
         pub(crate) const fn commit_merge(&mut self, delta: RawMomentsDelta<C, S>) {
             self.commit(delta);
+        }
+    }
+
+    c0nst impl<O, C, S: MomentWord> crate::sealed::OnlineSlot for RunningMoments<O, C, S> {}
+
+    c0nst impl<O, C, S> Slot<S> for RunningMoments<O, C, S>
+    where
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] MomentWord,
+        S::Sum: [c0nst] Accumulator + [c0nst] SumOps<S::SquareSum, S::Mean>,
+        S::SquareSum: [c0nst] Accumulator,
+    {
+        type Delta = RawMomentsDelta<C, S>;
+        type Snapshot<'a>
+            = Option<RawMomentsSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            RunningMoments::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            RunningMoments::reset(self);
+        }
+    }
+
+    c0nst impl<O, C, S> MergeSlot<S> for RunningMoments<O, C, S>
+    where
+        O: [c0nst] OverflowPolicy,
+        C: [c0nst] CounterWord,
+        S: [c0nst] MomentWord,
+        S::Sum: [c0nst] Accumulator + [c0nst] SumOps<S::SquareSum, S::Mean>,
+        S::SquareSum: [c0nst] Accumulator,
+    {
+        type MergeDelta = RawMomentsDelta<C, S>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_merge(delta);
         }
     }
 

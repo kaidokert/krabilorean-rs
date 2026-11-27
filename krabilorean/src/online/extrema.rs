@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use super::{MergeSlot, Slot};
 use crate::policy::{CounterWord, OverflowPolicy};
 use crate::sample::SampleValue;
 use crate::{Error, Quality};
@@ -30,8 +31,9 @@ pub struct Minimum<O, C, S> {
 }
 
 /// Prospective minimum state.
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MinimumDelta<C, S> {
+pub struct MinimumDelta<C, S> {
     samples: C,
     value: S,
     quality: Quality,
@@ -210,8 +212,9 @@ pub struct Maximum<O, C, S> {
 }
 
 /// Prospective maximum state.
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MaximumDelta<C, S> {
+pub struct MaximumDelta<C, S> {
     samples: C,
     value: S,
     quality: Quality,
@@ -393,8 +396,9 @@ pub struct Extrema<O, C, S> {
 }
 
 /// Prospective extrema state.
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ExtremaDelta<C, S> {
+pub struct ExtremaDelta<C, S> {
     samples: C,
     minimum: S,
     maximum: S,
@@ -567,6 +571,132 @@ c0nst::c0nst! {
                     self.quality.is_saturated() || newer.quality.is_saturated() || samples.saturated,
                 ),
             })
+        }
+    }
+
+    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Minimum<O, C, S> {}
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
+        for Minimum<O, C, S>
+    {
+        type Delta = MinimumDelta<C, S>;
+        type Snapshot<'a>
+            = Option<MinimumSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare_word(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit_word(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            Minimum::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            Minimum::reset(self);
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue>
+        MergeSlot<S> for Minimum<O, C, S>
+    {
+        type MergeDelta = MinimumDelta<C, S>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge_word(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_word(delta);
+        }
+    }
+
+    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Maximum<O, C, S> {}
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
+        for Maximum<O, C, S>
+    {
+        type Delta = MaximumDelta<C, S>;
+        type Snapshot<'a>
+            = Option<MaximumSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare_word(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit_word(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            Maximum::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            Maximum::reset(self);
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue>
+        MergeSlot<S> for Maximum<O, C, S>
+    {
+        type MergeDelta = MaximumDelta<C, S>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge_word(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_word(delta);
+        }
+    }
+
+    c0nst impl<O, C, S> crate::sealed::OnlineSlot for Extrema<O, C, S> {}
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue> Slot<S>
+        for Extrema<O, C, S>
+    {
+        type Delta = ExtremaDelta<C, S>;
+        type Snapshot<'a>
+            = Option<ExtremaSnapshot<C, S>>
+        where
+            Self: 'a;
+
+        fn prepare(&self, sample: S) -> Result<Self::Delta, Error> {
+            self.prepare_word(sample)
+        }
+
+        fn commit(&mut self, delta: Self::Delta) {
+            self.commit_word(delta);
+        }
+
+        fn snapshot(&self) -> Self::Snapshot<'_> {
+            Extrema::snapshot(self)
+        }
+
+        fn reset(&mut self) {
+            Extrema::reset(self);
+        }
+    }
+
+    c0nst impl<O: [c0nst] OverflowPolicy, C: [c0nst] CounterWord, S: [c0nst] SampleValue>
+        MergeSlot<S> for Extrema<O, C, S>
+    {
+        type MergeDelta = ExtremaDelta<C, S>;
+
+        fn prepare_merge(&self, newer: &Self) -> Result<Self::MergeDelta, Error> {
+            self.prepare_merge_word(newer)
+        }
+
+        fn commit_merge(&mut self, delta: Self::MergeDelta) {
+            self.commit_word(delta);
         }
     }
 }

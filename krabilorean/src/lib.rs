@@ -84,6 +84,12 @@ mod sealed {
         /// Seal of the public `ExactBucketView`.
         pub c0nst trait ExactBucketView {}
 
+        /// Seal of `online::Slot`.
+        pub c0nst trait OnlineSlot {}
+
+        /// Seal of `online::MergeableOnline`.
+        pub c0nst trait MergeableOnline {}
+
         /// Seal of the public `SampleValue`, with the comparisons that comparison-only families need.
         /// Families read these instead of matching on a type, so a new sample type changes no family.
         pub c0nst trait SampleValue: Sized + IntegerName {
